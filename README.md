@@ -1,59 +1,87 @@
 ## AgentScope ReAct HTTP Demo
 
-该项目实现了一个基于 AgentScope 的 `FastAPI + SSE` 单智能体服务，支持：
+This project provides a single-agent HTTP service based on `FastAPI + SSE`.
 
-- 实时中断（`/v1/sessions/{id}/interrupt`）
-- 并行工具调用（`parallel_tool_calls=True`）
-- 固定 schema 结构化输出（`response_mode=task_result`）
-- 内存会话管理（多 session、单 session 串行）
-- 受限 Python 工具执行（超时、关键字/模块限制、输出截断）
+Features:
 
-## 环境变量
+- Session creation and in-memory session management
+- Streaming chat via `/v1/sessions/{id}/chat/stream`
+- Session interruption via `/v1/sessions/{id}/interrupt`
+- Parallel tool execution inside the agent
+- Structured output mode with `response_mode=task_result`
+- Restricted Python tool execution
 
-在启动前请设置：
+## Required Environment Variables
+
+Set these before starting the service:
 
 - `ARK_API_KEY`
 - `ARK_BASE_URL`
 - `ARK_MODEL`
 
-可选变量：
+Optional:
 
-- `ARK_TEMPERATURE`（默认 `0.2`）
+- `ARK_TEMPERATURE` (default `0.2`)
 - `ARK_MAX_TOKENS`
-- `PYTHON_TOOL_TIMEOUT`（默认 `10`）
-- `PYTHON_TOOL_MAX_CODE_LENGTH`（默认 `4000`）
-- `PYTHON_TOOL_MAX_OUTPUT_LENGTH`（默认 `6000`）
+- `PYTHON_TOOL_TIMEOUT` (default `10`)
+- `PYTHON_TOOL_MAX_CODE_LENGTH` (default `4000`)
+- `PYTHON_TOOL_MAX_OUTPUT_LENGTH` (default `6000`)
 - `AGENT_SYSTEM_PROMPT`
 
-## 启动方式
+## Model Request Config
+
+Gateway passthrough settings are no longer read from environment variables.
+They are loaded from:
+
+- `config/model_request.toml`
+
+Example:
+
+```toml
+[default]
+allowed_openai_params = []
+extra_body = {}
+
+[models."doubao-seed-2-0-mini-260215"]
+allowed_openai_params = ["parallel_tool_calls"]
+extra_body = {}
+```
+
+Rules:
+
+- `default` applies to all models
+- `models."<model_name>"` overrides and extends `default`
+- `allowed_openai_params` is merged into `extra_body.allowed_openai_params`
+
+## Run
 
 ```bash
 python main.py
 ```
 
-或
+or
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-## 测试
+## Test
 
 ```bash
 python -m pytest -q
 ```
 
-## 原始模型流调试
+## Raw Model Debug Stream
 
-为排查 SSE 二次处理问题，提供了一个“原始模型直连”调试接口：
+To inspect the raw OpenAI-compatible stream without passing through the ReAct
+agent pipeline:
 
 - `POST /v1/debug/raw-model/stream`
-- Body:
+
+Body:
 
 ```json
 {
   "message": "你好"
 }
 ```
-
-该接口会直接输出 OpenAI SDK 返回的原始 chunk（`model_dump`），不经过 ReActAgent 与业务层事件拆分。

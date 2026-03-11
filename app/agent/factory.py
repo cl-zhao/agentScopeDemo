@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import json
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -179,6 +180,10 @@ class AgentFactory:
         }
         if self.config.model_max_tokens is not None:
             generate_kwargs["max_tokens"] = self.config.model_max_tokens
+        if self.config.model_extra_body:
+            generate_kwargs["extra_body"] = copy.deepcopy(
+                self.config.model_extra_body,
+            )
 
         model = OpenAIChatModel(
             model_name=self.config.ark_model,
@@ -208,4 +213,3 @@ class AgentFactory:
         # HTTP 服务模式下关闭终端打印，避免日志污染。
         agent.set_console_output_enabled(False)
         return agent
-
