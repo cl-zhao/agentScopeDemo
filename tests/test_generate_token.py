@@ -17,5 +17,6 @@ def test_generate_token():
     raw_token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjEifQ.eyJzdWIiOiJhZG1pbiIsImlhdCI6MTY4MjE5NjQwOSwiZXhwIjoxNjgyMjAwMDA5LCJhdWQiOiJodHRwczovL2FwaS5maWxlbmVyLmNvbS9hcGkvYXBpL2F1dGgvYXV0"
     session_id = "sk-1234567890"
     token = get_encrypted_token({"token": raw_token, "session_id": session_id})
+    print("\n")
     print(token)
     return

@@ -23,6 +23,7 @@ from agentscope.types import JSONSerializableObject
 from app.agent.mcp_registry import reg_mcp_function_level_usage
 from app.agent.mcp_trace import register_mcp_tracking_middleware
 from app.config import AppConfig
+from app.skills.register_agent_skills import register_agent_skills
 from app.tools import SafePythonExecutor
 
 
@@ -205,6 +206,9 @@ class AgentFactory:
         toolkit.register_tool_function(self.safe_execute_python)
 
         await reg_mcp_function_level_usage(toolkit, self.config)
+
+        register_agent_skills(toolkit)
+
 
         agent = ReActAgent(
             name="ReActAssistant",
