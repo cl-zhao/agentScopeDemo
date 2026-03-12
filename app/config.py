@@ -188,10 +188,10 @@ class AppConfig(BaseModel):
 
     @classmethod
     def from_env(cls) -> "AppConfig":
-        ark_model = _read_required_env("ARK_MODEL")
+        ark_model = _read_required_env("MODEL_NAME")
         return cls(
-            ark_api_key=_read_required_env("ARK_API_KEY"),
-            ark_base_url=_read_required_env("ARK_BASE_URL"),
+            ark_api_key=_read_required_env("MODEL_API_KEY"),
+            ark_base_url=_read_required_env("MODEL_BASE_URL"),
             ark_model=ark_model,
             model_temperature=_read_optional_float_env(
                 "ARK_TEMPERATURE",
