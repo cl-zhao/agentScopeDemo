@@ -23,7 +23,7 @@ class FakeApiManager:
         """初始化桩对象状态。"""
         self._session_id = "session-test-1"
 
-    def create_session(self) -> str:
+    async def create_session(self) -> str:
         """模拟创建会话。"""
         return self._session_id
 

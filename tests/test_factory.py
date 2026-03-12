@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.agent.factory import AgentFactory
 from app.config import AppConfig
 from app.tools import PythonSafetyConfig, SafePythonExecutor
 
 
-async def test_create_agent_attaches_gateway_extra_body() -> None:
+@pytest.mark.asyncio
+async def test_create_agent_attaches_gateway_extra_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """测试 create_agent 会将 extra_body 透传给模型生成参数。"""
     config = AppConfig(
         ark_api_key="sk-test",
@@ -24,7 +29,12 @@ async def test_create_agent_attaches_gateway_extra_body() -> None:
     )
     executor = SafePythonExecutor(PythonSafetyConfig())
 
-    agent_factory= AgentFactory(config=config, python_executor=executor)
+    async def _fake_reg_mcp(*args: object, **kwargs: object) -> object:
+        return args[0]
+
+    monkeypatch.setattr("app.agent.factory.reg_mcp_function_level_usage", _fake_reg_mcp)
+
+    agent_factory = AgentFactory(config=config, python_executor=executor)
     agent = await agent_factory.create_agent()
 
     assert agent.model.generate_kwargs["parallel_tool_calls"] is True

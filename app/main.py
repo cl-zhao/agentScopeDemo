@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uvicorn
 from fastapi import FastAPI
-
+from fastapi.middleware.cors import CORSMiddleware
 from app.agent.session_manager import AgentSessionManager
 from app.api.routes import router as agent_router
 from app.config import AppConfig
@@ -31,6 +31,16 @@ def create_app(
         version="0.1.0",
         description="基于 AgentScope ReActAgent 的 SSE 流式 HTTP 服务。",
     )
+
+    # ===== 添加下面的跨域中间件代码 =====
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # 允许所有来源（本地开发测试时使用 "*"）
+        allow_credentials=True,
+        allow_methods=["*"],  # 允许所有的 HTTP 方法 (GET, POST, OPTIONS 等)
+        allow_headers=["*"],  # 允许所有的 HTTP 请求头
+    )
+
     app.include_router(agent_router)
 
     if session_manager is not None:

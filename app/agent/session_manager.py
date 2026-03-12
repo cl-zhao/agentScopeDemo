@@ -20,6 +20,10 @@ from agentscope.message import Msg
 from agentscope.message._message_block import ToolResultBlock, ToolUseBlock
 
 from app.agent.factory import AgentFactory
+from app.agent.mcp_trace import (
+    MCP_TRACE_BLOCK_TYPE,
+    normalize_stream_output,
+)
 from app.config import AppConfig
 from app.schemas import (
     ChatStreamRequest,
@@ -87,8 +91,13 @@ class StreamDeduplicator:
         """初始化去重状态。"""
         self._assistant_text_cache: dict[str, str] = {}
         self._assistant_thinking_cache: dict[str, str] = {}
-        self._seen_tool_calls: set[str] = set()
+        self._closed_thinking_messages: set[str] = set()
+        self._tool_call_cache: dict[str, str] = {}
         self._tool_result_cache: dict[str, str] = {}
+        self._mcp_trace_cache: set[str] = set()
+        self._tool_input_cache: dict[str, dict[str, Any]] = {}
+        self._tool_name_cache: dict[str, str] = {}
+        self._mcp_tool_ids: set[str] = set()
 
     def extract_events(self, msg: Msg, is_last: bool) -> list[tuple[str, dict[str, Any]]]:
         """从消息中提取 SSE 事件。
@@ -103,8 +112,52 @@ class StreamDeduplicator:
         events: list[tuple[str, dict[str, Any]]] = []
 
         if msg.role == "assistant":
-            delta = self._extract_assistant_delta(msg)
-            if delta:
+            delta, current_text = self._extract_assistant_delta(msg)
+            thinking_delta, current_thinking = self._extract_assistant_thinking_delta(msg)
+            if thinking_delta:
+                events.append(
+                    (
+                        "thinking_chunk",
+                        {
+                            "message_id": msg.id,
+                            "thinking": thinking_delta,
+                            "is_last": False,
+                        },
+                    ),
+                )
+            if self._should_close_thinking_before_text(
+                message_id=msg.id,
+                current_text=current_text,
+                current_thinking=current_thinking,
+            ):
+                events.append(
+                    (
+                        "thinking_chunk",
+                        {
+                            "message_id": msg.id,
+                            "thinking": "",
+                            "is_last": True,
+                        },
+                    ),
+                )
+                self._closed_thinking_messages.add(msg.id)
+            elif self._should_close_thinking_on_message_end(
+                message_id=msg.id,
+                current_thinking=current_thinking,
+                is_last=is_last,
+            ):
+                events.append(
+                    (
+                        "thinking_chunk",
+                        {
+                            "message_id": msg.id,
+                            "thinking": "",
+                            "is_last": True,
+                        },
+                    ),
+                )
+                self._closed_thinking_messages.add(msg.id)
+            if delta or (is_last and current_text):
                 events.append(
                     (
                         "assistant_chunk",
@@ -115,39 +168,32 @@ class StreamDeduplicator:
                         },
                     ),
                 )
-            thinking_delta = self._extract_assistant_thinking_delta(msg)
-            if thinking_delta:
-                events.append(
-                    (
-                        "thinking_chunk",
-                        {
-                            "message_id": msg.id,
-                            "thinking": thinking_delta,
-                            "is_last": is_last,
-                        },
-                    ),
-                )
 
         for block in msg.get_content_blocks("tool_use"):
-            tool_event = self._build_tool_call_event(block)
+            tool_event = self._build_tool_call_event(block, is_last=is_last)
             if tool_event is not None:
                 events.append(("tool_call", tool_event))
 
         for block in msg.get_content_blocks("tool_result"):
             result_event = self._build_tool_result_event(block)
             if result_event is not None:
-                events.append(("tool_result", result_event))
+                events.append(("tool_call", result_event))
+
+        for block in msg.get_content_blocks(MCP_TRACE_BLOCK_TYPE):
+            trace_event = self._build_mcp_trace_event(block)
+            if trace_event is not None:
+                events.append(("tool_call", trace_event))
 
         return events
 
-    def _extract_assistant_delta(self, msg: Msg) -> str:
+    def _extract_assistant_delta(self, msg: Msg) -> tuple[str, str]:
         """提取 assistant 文本增量。
 
         参数:
             msg: 消息对象。
 
         返回:
-            str: 相比上一次的新增文本。
+            tuple[str, str]: 新增文本与当前累计文本。
         """
         current_text = msg.get_text_content(separator="\n") or ""
         previous_text = self._assistant_text_cache.get(msg.id, "")
@@ -157,16 +203,16 @@ class StreamDeduplicator:
             # 当消息并非简单追加时，回退为整段文本以避免内容丢失。
             delta = current_text
         self._assistant_text_cache[msg.id] = current_text
-        return delta
+        return delta, current_text
 
-    def _extract_assistant_thinking_delta(self, msg: Msg) -> str:
+    def _extract_assistant_thinking_delta(self, msg: Msg) -> tuple[str, str]:
         """提取 assistant thinking 增量。
 
         参数:
             msg: 消息对象。
 
         返回:
-            str: 相比上一次的新增 thinking 文本。
+            tuple[str, str]: 新增 thinking 与当前累计 thinking。
         """
         thinking_blocks = msg.get_content_blocks("thinking")
         current_thinking = "\n".join(
@@ -180,9 +226,42 @@ class StreamDeduplicator:
         else:
             delta = current_thinking
         self._assistant_thinking_cache[msg.id] = current_thinking
-        return delta
+        return delta, current_thinking
 
-    def _build_tool_call_event(self, block: ToolUseBlock) -> dict[str, Any] | None:
+    def _should_close_thinking_before_text(
+        self,
+        *,
+        message_id: str,
+        current_text: str,
+        current_thinking: str,
+    ) -> bool:
+        """当正文开始输出时，立即闭合 thinking 流。"""
+        return bool(
+            current_text
+            and current_thinking
+            and message_id not in self._closed_thinking_messages
+        )
+
+    def _should_close_thinking_on_message_end(
+        self,
+        *,
+        message_id: str,
+        current_thinking: str,
+        is_last: bool,
+    ) -> bool:
+        """仅对没有正文的 assistant 消息在结束时补一个 thinking 收尾。"""
+        return bool(
+            is_last
+            and current_thinking
+            and message_id not in self._closed_thinking_messages
+        )
+
+    def _build_tool_call_event(
+        self,
+        block: ToolUseBlock,
+        *,
+        is_last: bool,
+    ) -> dict[str, Any] | None:
         """构建工具调用事件。
 
         参数:
@@ -191,15 +270,42 @@ class StreamDeduplicator:
         返回:
             dict | None: 新工具调用事件，若重复则返回 None。
         """
-        tool_id = block["id"]
-        if tool_id in self._seen_tool_calls:
+        if not is_last:
             return None
-        self._seen_tool_calls.add(tool_id)
-        return {
+
+        tool_id = block["id"]
+        tool_name = block["name"]
+        tool_input = self._resolve_tool_input(block)
+        self._tool_name_cache[tool_id] = tool_name
+        self._tool_input_cache[tool_id] = tool_input
+        payload = {
             "tool_id": tool_id,
-            "tool_name": block["name"],
-            "tool_input": block.get("input", {}),
+            "tool_name": tool_name,
+            "status": "started",
+            "tool_input": tool_input,
+            "output": None,
+            "error": None,
+            "mcp_name": None,
+            "mcp_method": None,
         }
+        signature = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        if self._tool_call_cache.get(tool_id) == signature:
+            return None
+
+        self._tool_call_cache[tool_id] = signature
+        return payload
+
+    def _resolve_tool_input(self, block: ToolUseBlock) -> dict[str, Any]:
+        """提取最终稳定的工具输入参数。"""
+        raw_input = block.get("raw_input")
+        if isinstance(raw_input, str) and raw_input.strip():
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                parsed = json.loads(raw_input)
+                if isinstance(parsed, dict):
+                    return parsed
+
+        input_obj = block.get("input", {})
+        return input_obj if isinstance(input_obj, dict) else {}
 
     def _build_tool_result_event(
         self,
@@ -214,38 +320,54 @@ class StreamDeduplicator:
             dict | None: 新工具结果事件，若与上次结果一致则返回 None。
         """
         tool_id = block["id"]
-        output = self._normalize_tool_output(block.get("output"))
-        signature = json.dumps(output, ensure_ascii=False, sort_keys=True)
+        if tool_id in self._mcp_tool_ids:
+            return None
+
+        output = normalize_stream_output(block.get("output"))
+        payload = {
+            "tool_id": tool_id,
+            "tool_name": block.get("name") or self._tool_name_cache.get(tool_id),
+            "status": "completed",
+            "tool_input": self._tool_input_cache.get(tool_id),
+            "output": output,
+            "error": None,
+            "mcp_name": None,
+            "mcp_method": None,
+        }
+        signature = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         if self._tool_result_cache.get(tool_id) == signature:
             return None
 
         self._tool_result_cache[tool_id] = signature
-        return {
+        return payload
+
+    def _build_mcp_trace_event(self, block: dict[str, Any]) -> dict[str, Any] | None:
+        """构建 MCP 调用追踪事件。"""
+        status = block.get("status")
+        tool_id = block.get("tool_id")
+        if not isinstance(tool_id, str):
+            return None
+
+        self._mcp_tool_ids.add(tool_id)
+        if status == "started":
+            return None
+
+        payload = {
             "tool_id": tool_id,
-            "tool_name": block.get("name"),
-            "output": output,
+            "tool_name": block.get("tool_name") or self._tool_name_cache.get(tool_id),
+            "status": status,
+            "tool_input": self._tool_input_cache.get(tool_id),
+            "output": normalize_stream_output(block.get("result")),
+            "error": block.get("error"),
+            "mcp_name": block.get("mcp_name"),
+            "mcp_method": block.get("mcp_method"),
         }
+        signature = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        if signature in self._mcp_trace_cache:
+            return None
 
-    def _normalize_tool_output(self, output: Any) -> Any:
-        """标准化工具输出，保证结果可 JSON 序列化。
-
-        参数:
-            output: 任意工具输出对象。
-
-        返回:
-            Any: 可序列化的输出对象。
-        """
-        if isinstance(output, list):
-            normalized = []
-            for item in output:
-                if isinstance(item, dict):
-                    normalized.append(item)
-                else:
-                    normalized.append(str(item))
-            return normalized
-        if isinstance(output, dict):
-            return output
-        return output if isinstance(output, (str, int, float, bool, type(None))) else str(output)
+        self._mcp_trace_cache.add(signature)
+        return payload
 
 
 class AgentSessionManager:

@@ -8,7 +8,8 @@ from typing import Any
 import pytest
 from agentscope.message import Msg, TextBlock
 
-from app.agent.session_manager import AgentSessionManager, SessionRecord
+from app.agent.mcp_trace import MCP_TRACE_BLOCK_TYPE
+from app.agent.session_manager import AgentSessionManager, SessionRecord, StreamDeduplicator
 from app.config import AppConfig
 from app.schemas import ChatStreamRequest, ResponseMode
 
@@ -139,12 +140,21 @@ def _replace_session_agent(manager: AgentSessionManager, session_id: str, fake_a
     )
 
 
+def _stub_create_agent(manager: AgentSessionManager, fake_agent: FakeAgent) -> None:
+    """Stub 掉真实 create_agent，避免测试触发 MCP 注册。"""
+
+    async def _create_agent() -> FakeAgent:
+        return fake_agent
+
+    manager._factory.create_agent = _create_agent  # type: ignore[method-assign]  # noqa: SLF001
+
+
 @pytest.mark.asyncio
 async def test_session_status_lifecycle() -> None:
     """测试会话状态在正常流式调用中的生命周期。"""
     manager = AgentSessionManager(config=_build_test_config())
+    _stub_create_agent(manager, FakeAgent())
     session_id = await manager.create_session()
-    _replace_session_agent(manager, session_id, FakeAgent())
 
     before = manager.get_session_status(session_id)
     assert before.status == "idle"
@@ -166,8 +176,8 @@ async def test_session_status_lifecycle() -> None:
 async def test_session_interrupt_flow() -> None:
     """测试会话中断链路。"""
     manager = AgentSessionManager(config=_build_test_config())
+    _stub_create_agent(manager, FakeAgent())
     session_id = await manager.create_session()
-    _replace_session_agent(manager, session_id, FakeAgent())
 
     async def _consume_events() -> list[dict]:
         """收集流式事件。
@@ -198,9 +208,9 @@ async def test_session_interrupt_flow() -> None:
 async def test_session_stale_running_state_auto_heal() -> None:
     """测试残留 running 状态自动修复逻辑。"""
     manager = AgentSessionManager(config=_build_test_config())
-    session_id = await manager.create_session()
     fake_agent = FakeAgent()
-    _replace_session_agent(manager, session_id, fake_agent)
+    _stub_create_agent(manager, fake_agent)
+    session_id = await manager.create_session()
 
     # 构造一个已完成任务，但状态仍为 running 的异常场景。
     done_task = asyncio.create_task(asyncio.sleep(0))
@@ -217,4 +227,341 @@ async def test_session_stale_running_state_auto_heal() -> None:
 
     assert any(evt["event_type"] == "final" for evt in events)
     assert manager.get_session_status(session_id).status in {"idle", "interrupted"}
+
+
+def test_stream_deduplicator_maps_mcp_trace_to_tool_call_status() -> None:
+    """MCP 追踪 block 应被转换成统一的 tool_call 状态事件。"""
+    deduplicator = StreamDeduplicator()
+    msg = Msg(
+        name="system",
+        role="system",
+        content=[
+            {
+                "type": MCP_TRACE_BLOCK_TYPE,
+                "tool_id": "tool-1",
+                "tool_name": "search_docs",
+                "mcp_name": "docs-server",
+                "mcp_method": "search_docs",
+                "status": "completed",
+                "result": [{"type": "text", "text": "done"}],
+                "error": None,
+            },
+        ],
+    )
+
+    events = deduplicator.extract_events(msg, is_last=False)
+
+    assert events == [
+        (
+            "tool_call",
+            {
+                "tool_id": "tool-1",
+                "tool_name": "search_docs",
+                "status": "completed",
+                "tool_input": None,
+                "output": [{"type": "text", "text": "done"}],
+                "error": None,
+                "mcp_name": "docs-server",
+                "mcp_method": "search_docs",
+            },
+        ),
+    ]
+    assert deduplicator.extract_events(msg, is_last=False) == []
+
+
+def test_stream_deduplicator_emits_empty_final_assistant_chunk_for_stream_close() -> None:
+    """最后一帧无新增文本时，仍应发出 is_last=true 的 assistant_chunk。"""
+    deduplicator = StreamDeduplicator()
+    msg = Msg(
+        name="assistant",
+        role="assistant",
+        content=[TextBlock(type="text", text="你当前的完工数量为34512.87590。")],
+    )
+
+    first_events = deduplicator.extract_events(msg, is_last=False)
+    final_events = deduplicator.extract_events(msg, is_last=True)
+
+    assert first_events == [
+        (
+            "assistant_chunk",
+            {
+                "message_id": msg.id,
+                "text": "你当前的完工数量为34512.87590。",
+                "is_last": False,
+            },
+        ),
+    ]
+    assert final_events == [
+        (
+            "assistant_chunk",
+            {
+                "message_id": msg.id,
+                "text": "",
+                "is_last": True,
+            },
+        ),
+    ]
+
+
+def test_stream_deduplicator_closes_thinking_before_first_assistant_chunk() -> None:
+    """同一条消息从 thinking 切到正文时，应先闭合 thinking 再输出正文。"""
+    deduplicator = StreamDeduplicator()
+    msg = Msg(
+        name="assistant",
+        role="assistant",
+        content=[{"type": "thinking", "thinking": "先分析一下"}],
+    )
+
+    first_events = deduplicator.extract_events(msg, is_last=False)
+
+    msg.content = [
+        {"type": "thinking", "thinking": "先分析一下"},
+        {"type": "text", "text": "结果是 2"},
+    ]
+    switch_events = deduplicator.extract_events(msg, is_last=False)
+    final_events = deduplicator.extract_events(msg, is_last=True)
+
+    assert first_events == [
+        (
+            "thinking_chunk",
+            {
+                "message_id": msg.id,
+                "thinking": "先分析一下",
+                "is_last": False,
+            },
+        ),
+    ]
+    assert switch_events == [
+        (
+            "thinking_chunk",
+            {
+                "message_id": msg.id,
+                "thinking": "",
+                "is_last": True,
+            },
+        ),
+        (
+            "assistant_chunk",
+            {
+                "message_id": msg.id,
+                "text": "结果是 2",
+                "is_last": False,
+            },
+        ),
+    ]
+    assert final_events == [
+        (
+            "assistant_chunk",
+            {
+                "message_id": msg.id,
+                "text": "",
+                "is_last": True,
+            },
+        ),
+    ]
+
+
+def test_stream_deduplicator_emits_tool_call_only_after_final_tool_input() -> None:
+    """tool_call 应在参数稳定后发出，避免流式阶段拿到空 input。"""
+    deduplicator = StreamDeduplicator()
+    msg = Msg(
+        name="assistant",
+        role="assistant",
+        content=[
+            {
+                "type": "tool_use",
+                "id": "tool-1",
+                "name": "get_order_no_by_user_name",
+                "input": {},
+                "raw_input": '{"user_name":"alice"}',
+            },
+        ],
+    )
+
+    assert deduplicator.extract_events(msg, is_last=False) == []
+    assert deduplicator.extract_events(msg, is_last=True) == [
+        (
+            "tool_call",
+            {
+                "tool_id": "tool-1",
+                "tool_name": "get_order_no_by_user_name",
+                "status": "started",
+                "tool_input": {"user_name": "alice"},
+                "output": None,
+                "error": None,
+                "mcp_name": None,
+                "mcp_method": None,
+            },
+        ),
+    ]
+
+
+def test_stream_deduplicator_maps_normal_tool_result_to_completed_tool_call() -> None:
+    """普通工具结果应映射为 status=completed 的 tool_call 事件。"""
+    deduplicator = StreamDeduplicator()
+    start_msg = Msg(
+        name="assistant",
+        role="assistant",
+        content=[
+            {
+                "type": "tool_use",
+                "id": "tool-1",
+                "name": "calculate",
+                "input": {"expression": "1+1"},
+                "raw_input": '{"expression":"1+1"}',
+            },
+        ],
+    )
+    result_msg = Msg(
+        name="assistant",
+        role="assistant",
+        content=[
+            {
+                "type": "tool_result",
+                "id": "tool-1",
+                "name": "calculate",
+                "output": [{"type": "text", "text": "2"}],
+            },
+        ],
+    )
+
+    assert deduplicator.extract_events(start_msg, is_last=True) == [
+        (
+            "tool_call",
+            {
+                "tool_id": "tool-1",
+                "tool_name": "calculate",
+                "status": "started",
+                "tool_input": {"expression": "1+1"},
+                "output": None,
+                "error": None,
+                "mcp_name": None,
+                "mcp_method": None,
+            },
+        ),
+    ]
+    assert deduplicator.extract_events(result_msg, is_last=True) == [
+        (
+            "tool_call",
+            {
+                "tool_id": "tool-1",
+                "tool_name": "calculate",
+                "status": "completed",
+                "tool_input": {"expression": "1+1"},
+                "output": [{"type": "text", "text": "2"}],
+                "error": None,
+                "mcp_name": None,
+                "mcp_method": None,
+            },
+        ),
+    ]
+
+
+def test_stream_deduplicator_suppresses_mcp_tool_result_and_uses_status_events() -> None:
+    """MCP 工具的完成态应来自状态事件，而不是额外的 tool_result 事件名。"""
+    deduplicator = StreamDeduplicator()
+    start_msg = Msg(
+        name="assistant",
+        role="assistant",
+        content=[
+            {
+                "type": "tool_use",
+                "id": "tool-1",
+                "name": "search_docs",
+                "input": {"query": "hello"},
+                "raw_input": '{"query":"hello"}',
+            },
+        ],
+    )
+    running_msg = Msg(
+        name="system",
+        role="system",
+        content=[
+            {
+                "type": MCP_TRACE_BLOCK_TYPE,
+                "tool_id": "tool-1",
+                "tool_name": "search_docs",
+                "mcp_name": "docs-server",
+                "mcp_method": "search_docs",
+                "status": "running",
+                "result": None,
+                "error": None,
+            },
+        ],
+    )
+    result_msg = Msg(
+        name="assistant",
+        role="assistant",
+        content=[
+            {
+                "type": "tool_result",
+                "id": "tool-1",
+                "name": "search_docs",
+                "output": [{"type": "text", "text": "done"}],
+            },
+        ],
+    )
+    completed_msg = Msg(
+        name="system",
+        role="system",
+        content=[
+            {
+                "type": MCP_TRACE_BLOCK_TYPE,
+                "tool_id": "tool-1",
+                "tool_name": "search_docs",
+                "mcp_name": "docs-server",
+                "mcp_method": "search_docs",
+                "status": "completed",
+                "result": [{"type": "text", "text": "done"}],
+                "error": None,
+            },
+        ],
+    )
+
+    assert deduplicator.extract_events(start_msg, is_last=True) == [
+        (
+            "tool_call",
+            {
+                "tool_id": "tool-1",
+                "tool_name": "search_docs",
+                "status": "started",
+                "tool_input": {"query": "hello"},
+                "output": None,
+                "error": None,
+                "mcp_name": None,
+                "mcp_method": None,
+            },
+        ),
+    ]
+    assert deduplicator.extract_events(running_msg, is_last=False) == [
+        (
+            "tool_call",
+            {
+                "tool_id": "tool-1",
+                "tool_name": "search_docs",
+                "status": "running",
+                "tool_input": {"query": "hello"},
+                "output": None,
+                "error": None,
+                "mcp_name": "docs-server",
+                "mcp_method": "search_docs",
+            },
+        ),
+    ]
+    assert deduplicator.extract_events(result_msg, is_last=True) == []
+    assert deduplicator.extract_events(completed_msg, is_last=False) == [
+        (
+            "tool_call",
+            {
+                "tool_id": "tool-1",
+                "tool_name": "search_docs",
+                "status": "completed",
+                "tool_input": {"query": "hello"},
+                "output": [{"type": "text", "text": "done"}],
+                "error": None,
+                "mcp_name": "docs-server",
+                "mcp_method": "search_docs",
+            },
+        ),
+    ]
 

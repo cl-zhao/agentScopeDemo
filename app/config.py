@@ -198,8 +198,14 @@ class AppConfig(BaseModel):
         default=6000,
         description="Maximum output length for the restricted Python tool.",
     )
-    mcp_services_transport: Literal["streamable_http", "sse"] = Field(description="MCP services transport protocol.")
-    mcp_services_host: str = Field(description="MCP services host.")
+    mcp_services_transport: Literal["streamable_http", "sse"] = Field(
+        default="sse",
+        description="MCP services transport protocol.",
+    )
+    mcp_services_host: str = Field(
+        default="http://127.0.0.1:5130/mcp/general/sse",
+        description="MCP services host.",
+    )
 
     @classmethod
     def from_env(cls) -> "AppConfig":

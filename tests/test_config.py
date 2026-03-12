@@ -10,9 +10,9 @@ def test_from_env_loads_model_extra_body_from_toml(
     monkeypatch,
     tmp_path,
 ) -> None:
-    monkeypatch.setenv("ARK_API_KEY", "sk-test")
-    monkeypatch.setenv("ARK_BASE_URL", "http://localhost:4000/v1")
-    monkeypatch.setenv("ARK_MODEL", "demo-model")
+    monkeypatch.setenv("MODEL_API_KEY", "sk-test")
+    monkeypatch.setenv("MODEL_BASE_URL", "http://localhost:4000/v1")
+    monkeypatch.setenv("MODEL_NAME", "demo-model")
 
     config_file = tmp_path / "model_request.toml"
     config_file.write_text(

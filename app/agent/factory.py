@@ -21,6 +21,7 @@ from agentscope.tool import ToolResponse, Toolkit
 from agentscope.types import JSONSerializableObject
 
 from app.agent.mcp_registry import reg_mcp_function_level_usage
+from app.agent.mcp_trace import register_mcp_tracking_middleware
 from app.config import AppConfig
 from app.tools import SafePythonExecutor
 
@@ -218,6 +219,7 @@ class AgentFactory:
         # HTTP 服务模式下关闭终端打印，避免日志污染。
         # 开发环境下开启控制台日志
         mode = os.getenv("ENV_MODE", "prod")
+        register_mcp_tracking_middleware(toolkit=toolkit, agent=agent)
         if mode == "dev":
             agent.set_console_output_enabled(True)
         else:
