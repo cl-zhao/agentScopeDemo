@@ -269,13 +269,13 @@ class AgentSessionManager:
         self._factory = AgentFactory(config=config, python_executor=python_executor)
         self._sessions: dict[str, SessionRecord] = {}
 
-    def create_session(self) -> str:
+    async def create_session(self) -> str:
         """创建新会话。
 
         返回:
             str: 新会话 ID。
         """
-        agent = self._factory.create_agent()
+        agent = await self._factory.create_agent()
         session_id = agent.id
         self._sessions[session_id] = SessionRecord(
             session_id=session_id,

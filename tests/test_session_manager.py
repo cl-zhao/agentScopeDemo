@@ -143,7 +143,7 @@ def _replace_session_agent(manager: AgentSessionManager, session_id: str, fake_a
 async def test_session_status_lifecycle() -> None:
     """测试会话状态在正常流式调用中的生命周期。"""
     manager = AgentSessionManager(config=_build_test_config())
-    session_id = manager.create_session()
+    session_id = await manager.create_session()
     _replace_session_agent(manager, session_id, FakeAgent())
 
     before = manager.get_session_status(session_id)
@@ -166,7 +166,7 @@ async def test_session_status_lifecycle() -> None:
 async def test_session_interrupt_flow() -> None:
     """测试会话中断链路。"""
     manager = AgentSessionManager(config=_build_test_config())
-    session_id = manager.create_session()
+    session_id = await manager.create_session()
     _replace_session_agent(manager, session_id, FakeAgent())
 
     async def _consume_events() -> list[dict]:
@@ -198,7 +198,7 @@ async def test_session_interrupt_flow() -> None:
 async def test_session_stale_running_state_auto_heal() -> None:
     """测试残留 running 状态自动修复逻辑。"""
     manager = AgentSessionManager(config=_build_test_config())
-    session_id = manager.create_session()
+    session_id = await manager.create_session()
     fake_agent = FakeAgent()
     _replace_session_agent(manager, session_id, fake_agent)
 

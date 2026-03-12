@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -45,8 +45,8 @@ def _read_optional_int_env(env_name: str, default: int | None) -> int | None:
 
 
 def _merge_allowed_openai_params(
-    extra_body: dict[str, Any],
-    allowed_params: list[str],
+        extra_body: dict[str, Any],
+        allowed_params: list[str],
 ) -> dict[str, Any]:
     if not allowed_params:
         return extra_body
@@ -54,7 +54,7 @@ def _merge_allowed_openai_params(
     merged = dict(extra_body)
     existing = merged.get("allowed_openai_params", [])
     if not isinstance(existing, list) or not all(
-        isinstance(item, str) for item in existing
+            isinstance(item, str) for item in existing
     ):
         raise ValueError(
             "allowed_openai_params in extra_body must be a list of strings",
@@ -69,8 +69,8 @@ def _merge_allowed_openai_params(
 
 
 def _merge_json_objects(
-    base: dict[str, Any],
-    override: dict[str, Any],
+        base: dict[str, Any],
+        override: dict[str, Any],
 ) -> dict[str, Any]:
     merged = dict(base)
     for key, value in override.items():
@@ -83,9 +83,9 @@ def _merge_json_objects(
 
 
 def _validate_request_section(
-    section: Any,
-    *,
-    section_name: str,
+        section: Any,
+        *,
+        section_name: str,
 ) -> dict[str, Any]:
     if section is None:
         return {"extra_body": {}, "allowed_openai_params": []}
@@ -98,7 +98,7 @@ def _validate_request_section(
 
     allowed = section.get("allowed_openai_params", [])
     if not isinstance(allowed, list) or not all(
-        isinstance(item, str) for item in allowed
+            isinstance(item, str) for item in allowed
     ):
         raise ValueError(
             f"{section_name}.allowed_openai_params must be a string array",
@@ -111,8 +111,8 @@ def _validate_request_section(
 
 
 def _load_model_request_config(
-    model_name: str,
-    config_path: Path | None = None,
+        model_name: str,
+        config_path: Path | None = None,
 ) -> dict[str, Any]:
     if config_path is None:
         config_path = MODEL_REQUEST_CONFIG_PATH
@@ -153,6 +153,19 @@ def _load_model_request_config(
     )
 
 
+def _read_mcp_services_transport() -> Literal["streamable_http", "sse"]:
+    """Read MCP services transport from environment variable."""
+    read_mcp_services_transport = os.getenv(
+        "MCP_SERVICES_TRANSPORT",
+        default="sse",
+    )
+    if read_mcp_services_transport not in ["streamable_http", "sse"]:
+        raise ValueError(
+            "MCP_SERVICES_TRANSPORT must be one of 'streamable_http' or 'sse'",
+        )
+    return read_mcp_services_transport
+
+
 class AppConfig(BaseModel):
     ark_api_key: str = Field(description="API key for the OpenAI-compatible endpoint.")
     ark_base_url: str = Field(description="Base URL for the OpenAI-compatible endpoint.")
@@ -185,6 +198,8 @@ class AppConfig(BaseModel):
         default=6000,
         description="Maximum output length for the restricted Python tool.",
     )
+    mcp_services_transport: Literal["streamable_http", "sse"] = Field(description="MCP services transport protocol.")
+    mcp_services_host: str = Field(description="MCP services host.")
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -210,12 +225,12 @@ class AppConfig(BaseModel):
                 "PYTHON_TOOL_MAX_CODE_LENGTH",
                 default=4000,
             )
-            or 4000,
+                                        or 4000,
             python_tool_max_output_length=_read_optional_int_env(
                 "PYTHON_TOOL_MAX_OUTPUT_LENGTH",
                 default=6000,
             )
-            or 6000,
+                                          or 6000,
             system_prompt=os.getenv(
                 "AGENT_SYSTEM_PROMPT",
                 (
@@ -224,4 +239,10 @@ class AppConfig(BaseModel):
                     "actionable results."
                 ),
             ),
+            mcp_services_host=os.getenv(
+                "MCP_SERVICES_HOST",
+                default="http://127.0.0.1:5130/mcp/general/sse",
+            ),
+            mcp_services_transport=_read_mcp_services_transport(),
+
         )

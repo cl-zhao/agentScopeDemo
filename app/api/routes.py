@@ -55,7 +55,7 @@ def get_session_manager(request: Request) -> AgentSessionManager:
 
 
 @router.post("/sessions", response_model=SessionCreateResponse)
-def create_session(
+async def create_session(
     manager: AgentSessionManager = Depends(get_session_manager),
 ) -> SessionCreateResponse:
     """创建新会话。
@@ -66,7 +66,7 @@ def create_session(
     返回:
         SessionCreateResponse: 创建结果。
     """
-    session_id = manager.create_session()
+    session_id = await manager.create_session()
     return SessionCreateResponse(session_id=session_id)
 
 

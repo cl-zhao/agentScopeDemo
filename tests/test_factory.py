@@ -7,7 +7,7 @@ from app.config import AppConfig
 from app.tools import PythonSafetyConfig, SafePythonExecutor
 
 
-def test_create_agent_attaches_gateway_extra_body() -> None:
+async def test_create_agent_attaches_gateway_extra_body() -> None:
     """测试 create_agent 会将 extra_body 透传给模型生成参数。"""
     config = AppConfig(
         ark_api_key="sk-test",
@@ -24,7 +24,8 @@ def test_create_agent_attaches_gateway_extra_body() -> None:
     )
     executor = SafePythonExecutor(PythonSafetyConfig())
 
-    agent = AgentFactory(config=config, python_executor=executor).create_agent()
+    agent_factory= AgentFactory(config=config, python_executor=executor)
+    agent = await agent_factory.create_agent()
 
     assert agent.model.generate_kwargs["parallel_tool_calls"] is True
     assert agent.model.generate_kwargs["max_tokens"] == 256

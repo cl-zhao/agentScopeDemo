@@ -17,7 +17,9 @@ from agentscope.memory import InMemoryMemory
 from agentscope.message import TextBlock
 from agentscope.model import OpenAIChatModel
 from agentscope.tool import ToolResponse, Toolkit
+from agentscope.types import JSONSerializableObject
 
+from app.agent.mcp_registry import reg_mcp_function_level_usage
 from app.config import AppConfig
 from app.tools import SafePythonExecutor
 
@@ -167,13 +169,13 @@ class AgentFactory:
         """
         return await self.python_executor.execute(code=code, timeout=timeout)
 
-    def create_agent(self) -> ReActAgent:
+    async def create_agent(self) -> ReActAgent:
         """构建 ReActAgent 实例。
 
         返回:
             ReActAgent: 完整初始化后的智能体。
         """
-        generate_kwargs: dict[str, object] = {
+        generate_kwargs: dict[str, JSONSerializableObject] = {
             "temperature": self.config.model_temperature,
             # 模型层面同时打开并行工具调用参数。
             "parallel_tool_calls": True,
@@ -199,6 +201,8 @@ class AgentFactory:
         toolkit.register_tool_function(self.get_current_time)
         toolkit.register_tool_function(self.evaluate_expression)
         toolkit.register_tool_function(self.safe_execute_python)
+
+        await reg_mcp_function_level_usage(toolkit, self.config)
 
         agent = ReActAgent(
             name="ReActAssistant",
