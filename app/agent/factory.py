@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import copy
 import json
+import os
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -215,5 +216,10 @@ class AgentFactory:
         )
 
         # HTTP 服务模式下关闭终端打印，避免日志污染。
-        agent.set_console_output_enabled(False)
+        # 开发环境下开启控制台日志
+        mode = os.getenv("ENV_MODE", "prod")
+        if mode == "dev":
+            agent.set_console_output_enabled(True)
+        else:
+            agent.set_console_output_enabled(False)
         return agent
