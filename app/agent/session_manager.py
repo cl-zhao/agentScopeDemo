@@ -32,6 +32,7 @@ from app.schemas import (
     SessionStatusResponse,
     TaskResultSchema,
 )
+from app.security.security_manager import get_encrypted_token, get_decrypted_principal
 from app.tools import PythonSafetyConfig, SafePythonExecutor
 
 
@@ -494,6 +495,10 @@ class AgentSessionManager:
             queue: asyncio.Queue = asyncio.Queue(maxsize=200)
             session.agent.set_msg_queue_enabled(True, queue=queue)
             session.set_status("running")
+
+            # 获取 mcp的 token(_d参数)
+            m_param = get_decrypted_principal(request.access_param)
+            print("_d参数为:\n" + json.dumps(m_param))
 
             user_msg = Msg(name="user", content=request.message, role="user")
             structured_model = (

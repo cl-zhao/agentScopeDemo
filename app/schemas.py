@@ -38,6 +38,10 @@ class ChatStreamRequest(BaseModel):
         default=ResponseMode.TEXT,
         description="响应模式，支持 text 或 task_result。",
     )
+    access_param: str = Field(
+        min_length=1,
+        description="请求参数，用于验证会话权限，传递key。",
+    )
 
 
 class RawModelStreamRequest(BaseModel):
