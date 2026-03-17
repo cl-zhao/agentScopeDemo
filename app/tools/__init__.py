@@ -4,6 +4,7 @@
 """
 
 from .safe_python import PythonSafetyConfig, SafePythonExecutor
+from .skill_file_reader import SkillFileReader
 
-__all__ = ["PythonSafetyConfig", "SafePythonExecutor"]
+__all__ = ["PythonSafetyConfig", "SafePythonExecutor", "SkillFileReader"]
 

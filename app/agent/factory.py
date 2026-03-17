@@ -23,8 +23,11 @@ from agentscope.types import JSONSerializableObject
 from app.agent.mcp_registry import reg_mcp_function_level_usage
 from app.agent.mcp_trace import register_mcp_tracking_middleware
 from app.config import AppConfig
-from app.skills.register_agent_skills import register_agent_skills
-from app.tools import SafePythonExecutor
+from app.skills.register_agent_skills import (
+    AGENT_SKILL_INSTRUCTION,
+    register_agent_skills,
+)
+from app.tools import SafePythonExecutor, SkillFileReader
 
 
 class SafeExpressionEvaluator:
@@ -200,7 +203,7 @@ class AgentFactory:
             generate_kwargs=generate_kwargs,
         )
 
-        toolkit = Toolkit()
+        toolkit = Toolkit(agent_skill_instruction=AGENT_SKILL_INSTRUCTION)
         toolkit.register_tool_function(self.get_current_time)
         toolkit.register_tool_function(self.evaluate_expression)
         toolkit.register_tool_function(self.safe_execute_python)
@@ -208,6 +211,14 @@ class AgentFactory:
         await reg_mcp_function_level_usage(toolkit, self.config)
 
         register_agent_skills(toolkit)
+        toolkit.register_tool_function(
+            SkillFileReader(
+                {
+                    skill_name: skill["dir"]
+                    for skill_name, skill in toolkit.skills.items()
+                },
+            ).read_agent_skill_file,
+        )
 
 
         agent = ReActAgent(

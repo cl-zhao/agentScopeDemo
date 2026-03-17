@@ -42,3 +42,7 @@ async def test_create_agent_attaches_gateway_extra_body(
     assert agent.model.generate_kwargs["extra_body"] == {
         "allowed_openai_params": ["parallel_tool_calls", "response_format"],
     }
+    assert "read_agent_skill_file" in agent.toolkit.tools
+    assert "order_complete_quantity_query" in agent.toolkit.skills
+    assert "sample_skill" not in agent.toolkit.skills
+    assert "must call `read_agent_skill_file` first" in agent.sys_prompt
