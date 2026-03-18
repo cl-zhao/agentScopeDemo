@@ -15,6 +15,8 @@ from app.schemas import (
     SessionStatusResponse,
 )
 
+TEST_ACCESS_PARAM = "opaque-token"
+
 
 class FakeApiManager:
     """用于 API 测试的会话管理器桩对象。"""
@@ -107,7 +109,7 @@ def test_chat_stream_endpoint() -> None:
     with client.stream(
         "POST",
         "/v1/sessions/session-test-1/chat/stream",
-        json={"message": "hello"},
+        json={"message": "hello", "access_param": TEST_ACCESS_PARAM},
     ) as response:
         body_text = "".join(response.iter_text())
 

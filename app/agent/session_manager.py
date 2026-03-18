@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from uuid import uuid4
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
@@ -20,6 +21,11 @@ from agentscope.message import Msg
 from agentscope.message._message_block import ToolResultBlock, ToolUseBlock
 
 from app.agent.factory import AgentFactory
+from app.agent.litellm_context import (
+    build_litellm_request_context,
+    reset_current_litellm_request_context,
+    set_current_litellm_request_context,
+)
 from app.agent.mcp_trace import (
     MCP_TRACE_BLOCK_TYPE,
     normalize_stream_output,
@@ -32,7 +38,7 @@ from app.schemas import (
     SessionStatusResponse,
     TaskResultSchema,
 )
-from app.security.security_manager import get_encrypted_token, get_decrypted_principal
+from app.security.security_manager import get_decrypted_principal
 from app.tools import PythonSafetyConfig, SafePythonExecutor
 
 
@@ -499,6 +505,12 @@ class AgentSessionManager:
             # 获取 mcp的 token(_d参数)
             m_param = get_decrypted_principal(request.access_param)
             print("_d参数为:\n" + json.dumps(m_param))
+            request_context = build_litellm_request_context(
+                m_param,
+                session_id=session_id,
+                app_request_id=str(uuid4()),
+            )
+            context_token = set_current_litellm_request_context(request_context)
 
             user_msg = Msg(name="user", content=request.message, role="user")
             structured_model = (
@@ -543,6 +555,7 @@ class AgentSessionManager:
                 )
                 return
             finally:
+                reset_current_litellm_request_context(context_token)
                 session.running_task = None
                 session.agent.set_msg_queue_enabled(False)
 
