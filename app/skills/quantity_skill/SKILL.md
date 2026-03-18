@@ -1,6 +1,6 @@
 ---
 name: order_complete_quantity_query
-description: 用于查询用户当前订单的完工数量
+description: 查询用户订单数量时使用
 ---
 
 # 订单完工数量查询技能

@@ -12,7 +12,7 @@ AGENT_SKILL_INSTRUCTION = (
     "using that skill. Do not guess or paraphrase unread skill content."
 )
 
-ENABLED_SKILL_DIRS = ("quantity_skill",)
+ENABLED_SKILL_DIRS = ("quantity_skill", "intelligent_dispatching")
 
 
 def register_agent_skills(toolkit: Toolkit) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from zoneinfo import ZoneInfoNotFoundError
 
 from app.agent.factory import AgentFactory
 from app.config import AppConfig
@@ -44,5 +45,33 @@ async def test_create_agent_attaches_gateway_extra_body(
     }
     assert "read_agent_skill_file" in agent.toolkit.tools
     assert "order_complete_quantity_query" in agent.toolkit.skills
+    assert "智能派工" in agent.toolkit.skills
     assert "sample_skill" not in agent.toolkit.skills
     assert "must call `read_agent_skill_file` first" in agent.sys_prompt
+
+
+@pytest.mark.asyncio
+async def test_get_current_time_falls_back_to_builtin_utc_when_zoneinfo_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = AppConfig(
+        ark_api_key="sk-test",
+        ark_base_url="http://localhost:4000/v1",
+        ark_model="demo-model",
+        python_tool_timeout=1.0,
+        python_tool_max_code_length=1000,
+        python_tool_max_output_length=1000,
+    )
+    executor = SafePythonExecutor(PythonSafetyConfig())
+    agent_factory = AgentFactory(config=config, python_executor=executor)
+
+    def _raise_zoneinfo_not_found(_: str) -> object:
+        raise ZoneInfoNotFoundError("No time zone found")
+
+    monkeypatch.setattr("app.agent.factory.ZoneInfo", _raise_zoneinfo_not_found)
+
+    response = await agent_factory.get_current_time()
+    first_block = response.content[0]
+    text = first_block["text"] if isinstance(first_block, dict) else first_block.text
+
+    assert "UTC" in text

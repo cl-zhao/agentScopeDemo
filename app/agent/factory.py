@@ -9,7 +9,7 @@ import ast
 import copy
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agentscope.agent import ReActAgent
@@ -120,7 +120,7 @@ class AgentFactory:
         try:
             now = datetime.now(ZoneInfo(timezone_name))
         except ZoneInfoNotFoundError:
-            now = datetime.now(ZoneInfo("UTC"))
+            now = datetime.now(timezone.utc)
             timezone_name = "UTC"
 
         return ToolResponse(
