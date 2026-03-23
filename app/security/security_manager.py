@@ -1,9 +1,10 @@
+import json
 import os
 from datetime import datetime, timezone, timedelta
 
 from dotenv import load_dotenv
 
-from app.security.rsa_crypto_service_helper import encrypt, decrypt
+from app.security.rsa_aes_crypto_service_helper import encrypt, decrypt
 from app.security.secure_jwt_handler import generate_token, validate_token
 
 
@@ -35,17 +36,15 @@ def get_encrypted_token(plain_text: str | dict[str, str]):
     # 需要传递的数据
     claims: dict = {}
     # 变量 plain_text_dict 的所有元素
-    for k, v in plain_text_dict.items():
-        encrypt_data = _get_encrypted_data(v)
-        claims["encrypted_" + k] = encrypt_data
-
+    encrypted_data = _get_encrypted_data(json.dumps(plain_text_dict))
+    claims["encrypted_data"] = encrypted_data
 
     token = generate_token("3", "1", aud, rsa_key["PrivateKey"], password, data=claims, issued_utc=issuedUtc,
                            expires_utc=expiresUtc)
     return token
 
 
-def get_decrypted_principal(token: str):
+def get_decrypted_principal(token: str) -> dict[str, object]:
     """获取解密后的principal"""
     # 1. 生成密钥对
     rsa_key = {
@@ -61,7 +60,8 @@ def get_decrypted_principal(token: str):
         if k.startswith("encrypted_"):
             need_remove_keys.append(k)
             decrypted_data = _get_decrypted_data(v)
-            new_data[k.replace("encrypted_", "")] = decrypted_data
+            for decrypted_k, decrypted_v in decrypted_data.items():
+                new_data[decrypted_k] = decrypted_v
 
     for need_remove_key in need_remove_keys:
         decrypted_principal.pop(need_remove_key)
@@ -80,13 +80,13 @@ def _get_encrypted_data(plain_text: str):
     return encrypted
 
 
-def _get_decrypted_data(encrypted_text: str):
+def _get_decrypted_data(encrypted_text: str) -> dict[str, object]:
     # 1. 生成密钥对
     rsa_key = {
         "PrivateKey": os.getenv("RSA_CRYPTO_SERVICE_HELPER_PRIVATE_KEY")
     }
     decrypted = decrypt(encrypted_text, rsa_key["PrivateKey"])
-    return decrypted
+    return json.loads(decrypted)
 
 
 def test():

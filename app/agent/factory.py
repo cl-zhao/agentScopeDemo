@@ -16,10 +16,10 @@ from agentscope.agent import ReActAgent
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.memory import InMemoryMemory
 from agentscope.message import TextBlock
-from agentscope.model import OpenAIChatModel
 from agentscope.tool import ToolResponse, Toolkit
 from agentscope.types import JSONSerializableObject
 
+from app.agent.litellm_context import ContextAwareOpenAIChatModel
 from app.agent.mcp_registry import reg_mcp_function_level_usage
 from app.agent.mcp_trace import register_mcp_tracking_middleware
 from app.config import AppConfig
@@ -235,7 +235,7 @@ class AgentFactory:
                 self.config.model_extra_body,
             )
 
-        model = OpenAIChatModel(
+        model = ContextAwareOpenAIChatModel(
             model_name=self.config.ark_model,
             api_key=self.config.ark_api_key,
             stream=True,

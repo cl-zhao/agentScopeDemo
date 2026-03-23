@@ -1,22 +1,58 @@
-import os
+from __future__ import annotations
 
-from dotenv import load_dotenv
-
-from app.security.security_manager import get_encrypted_token
-
-# 显式加载 .env 文件（推荐放在入口文件顶部）
-load_dotenv()
-ARK_MODEL = os.getenv("MODEL_NAME")
-print("读取环境变量成功" if ARK_MODEL is not None else "未找到环境变量")
+from app.security import security_manager
 
 
-def test_generate_token():
-    """测试生成 加密后的token。"""
+def test_generate_token_uses_encrypted_claims(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SECURE_JWT_HANDLER_PRIVATE_KEY", "private-key")
+    monkeypatch.setenv("SECURE_JWT_HANDLER_PASSWORD", "secret-password")
 
-    # 替换这里为原始的访问飞龙版的token
-    raw_token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjEifQ.eyJzdWIiOiJhZG1pbiIsImlhdCI6MTY4MjE5NjQwOSwiZXhwIjoxNjgyMjAwMDA5LCJhdWQiOiJodHRwczovL2FwaS5maWxlbmVyLmNvbS9hcGkvYXBpL2F1dGgvYXV0"
-    session_id = "sk-1234567890"
-    token = get_encrypted_token({"token": raw_token, "session_id": session_id})
-    print("\n")
-    print(token)
-    return
+    captured: dict[str, object] = {}
+
+    def _fake_encrypt(value: str) -> str:
+        return f"encrypted::{value}"
+
+    def _fake_generate_token(
+        user_id: str,
+        tenant_id: str,
+        audience: str,
+        private_key_base64: str,
+        rsa_password: str,
+        *,
+        data: dict[str, str],
+        issued_utc,
+        expires_utc,
+    ) -> str:
+        captured.update(
+            {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "audience": audience,
+                "private_key_base64": private_key_base64,
+                "rsa_password": rsa_password,
+                "data": data,
+                "issued_utc": issued_utc,
+                "expires_utc": expires_utc,
+            },
+        )
+        return "signed-token"
+
+    monkeypatch.setattr(security_manager, "_get_encrypted_data", _fake_encrypt)
+    monkeypatch.setattr(security_manager, "generate_token", _fake_generate_token)
+
+    token = security_manager.get_encrypted_token(
+        {"token": "raw-token", "session_id": "sk-1234567890"},
+    )
+
+    assert token == "signed-token"
+    assert captured["user_id"] == "3"
+    assert captured["tenant_id"] == "1"
+    assert captured["audience"] == "ThirdClient"
+    assert captured["private_key_base64"] == "private-key"
+    assert captured["rsa_password"] == "secret-password"
+    assert captured["data"] == {
+        "encrypted_token": "encrypted::raw-token",
+        "encrypted_session_id": "encrypted::sk-1234567890",
+    }

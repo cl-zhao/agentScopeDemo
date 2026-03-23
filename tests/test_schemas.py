@@ -7,7 +7,7 @@ from app.schemas import ChatStreamRequest, ResponseMode, TaskResultSchema
 
 def test_chat_stream_request_default_mode() -> None:
     """测试 ChatStreamRequest 默认响应模式。"""
-    request = ChatStreamRequest(message="hello")
+    request = ChatStreamRequest(message="hello", access_param="opaque-token")
     assert request.response_mode == ResponseMode.TEXT
 
 

@@ -13,6 +13,8 @@ from app.agent.session_manager import AgentSessionManager, SessionRecord, Stream
 from app.config import AppConfig
 from app.schemas import ChatStreamRequest, ResponseMode
 
+TEST_ACCESS_PARAM = "opaque-token"
+
 
 class FakeAgent:
     """用于测试的最小智能体桩对象。"""
@@ -149,9 +151,22 @@ def _stub_create_agent(manager: AgentSessionManager, fake_agent: FakeAgent) -> N
     manager._factory.create_agent = _create_agent  # type: ignore[method-assign]  # noqa: SLF001
 
 
+def _stub_decrypted_principal(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.agent.session_manager.get_decrypted_principal",
+        lambda _token: {
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier": "user-1",
+            "http://www.aspnetboilerplate.com/identity/claims/tenantId": "tenant-1",
+        },
+    )
+
+
 @pytest.mark.asyncio
-async def test_session_status_lifecycle() -> None:
+async def test_session_status_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """测试会话状态在正常流式调用中的生命周期。"""
+    _stub_decrypted_principal(monkeypatch)
     manager = AgentSessionManager(config=_build_test_config())
     _stub_create_agent(manager, FakeAgent())
     session_id = await manager.create_session()
@@ -162,7 +177,11 @@ async def test_session_status_lifecycle() -> None:
     events = []
     async for event in manager.stream_chat(
         session_id=session_id,
-        request=ChatStreamRequest(message="你好", response_mode=ResponseMode.TEXT),
+        request=ChatStreamRequest(
+            message="你好",
+            response_mode=ResponseMode.TEXT,
+            access_param=TEST_ACCESS_PARAM,
+        ),
     ):
         events.append(event)
 
@@ -173,8 +192,11 @@ async def test_session_status_lifecycle() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_interrupt_flow() -> None:
+async def test_session_interrupt_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """测试会话中断链路。"""
+    _stub_decrypted_principal(monkeypatch)
     manager = AgentSessionManager(config=_build_test_config())
     _stub_create_agent(manager, FakeAgent())
     session_id = await manager.create_session()
@@ -188,7 +210,11 @@ async def test_session_interrupt_flow() -> None:
         collected = []
         async for event in manager.stream_chat(
             session_id=session_id,
-            request=ChatStreamRequest(message="请执行长任务", response_mode=ResponseMode.TEXT),
+            request=ChatStreamRequest(
+                message="请执行长任务",
+                response_mode=ResponseMode.TEXT,
+                access_param=TEST_ACCESS_PARAM,
+            ),
         ):
             collected.append(event)
         return collected
@@ -205,8 +231,11 @@ async def test_session_interrupt_flow() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_stale_running_state_auto_heal() -> None:
+async def test_session_stale_running_state_auto_heal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """测试残留 running 状态自动修复逻辑。"""
+    _stub_decrypted_principal(monkeypatch)
     manager = AgentSessionManager(config=_build_test_config())
     fake_agent = FakeAgent()
     _stub_create_agent(manager, fake_agent)
@@ -221,7 +250,11 @@ async def test_session_stale_running_state_auto_heal() -> None:
     events = []
     async for event in manager.stream_chat(
         session_id=session_id,
-        request=ChatStreamRequest(message="状态修复后继续对话", response_mode=ResponseMode.TEXT),
+        request=ChatStreamRequest(
+            message="状态修复后继续对话",
+            response_mode=ResponseMode.TEXT,
+            access_param=TEST_ACCESS_PARAM,
+        ),
     ):
         events.append(event)
 

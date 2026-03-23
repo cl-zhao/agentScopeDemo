@@ -53,6 +53,34 @@ Rules:
 - `models."<model_name>"` overrides and extends `default`
 - `allowed_openai_params` is merged into `extra_body.allowed_openai_params`
 
+## LiteLLM Usage Attribution
+
+When this service calls an OpenAI-compatible LiteLLM gateway, each model
+request now includes request-scoped usage identifiers derived from the current
+`access_param` principal:
+
+- `x-end-user-id: <tenant_id>:<user_id>`
+- `x-litellm-session-id: <agentscope_session_id>`
+- `user: <tenant_id>:<user_id>`
+- `metadata.tenant_id`
+- `metadata.user_id`
+- `metadata.app_request_id`
+- `metadata.agentscope_session_id`
+
+To let LiteLLM attribute spend by end user, configure the proxy with:
+
+```yaml
+general_settings:
+  user_header_name: "x-end-user-id"
+```
+
+Recommended query dimensions in LiteLLM:
+
+- `end_user` for per-user / per-tenant-user usage
+- `session_id` for per-conversation correlation
+- `metadata.app_request_id` for grouping multiple LiteLLM calls triggered by one
+  AgentScope request
+
 ## Run
 
 ```bash
