@@ -44,6 +44,10 @@ class ExecutionStore:
         if self._decode_scalar(current) == execution_id:
             await self._redis.delete(self._session_key(session_id))
 
+    async def get_active_execution_id(self, session_id: str) -> str | None:
+        value = await self._redis.get(self._session_key(session_id))
+        return self._decode_scalar(value)
+
     async def save_execution_record(
         self,
         record: ExecutionRecord,
@@ -115,6 +119,9 @@ class ExecutionStore:
     async def is_interrupt_requested(self, execution_id: str) -> bool:
         value = await self._redis.get(self._interrupt_key(execution_id))
         return self._decode_scalar(value) == "1"
+
+    async def clear_interrupt_requested(self, execution_id: str) -> None:
+        await self._redis.delete(self._interrupt_key(execution_id))
 
     @staticmethod
     def _decode_scalar(value: Any) -> str | None:
