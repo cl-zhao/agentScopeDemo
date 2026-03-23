@@ -274,6 +274,8 @@ class AgentFactory:
             model=model,
             formatter=OpenAIChatFormatter(),
             toolkit=toolkit,
+            # Memory is still useful for one execution's internal agent loop, but
+            # it must stay request-scoped and be discarded after the response ends.
             memory=InMemoryMemory(),
             parallel_tool_calls=True,
         )

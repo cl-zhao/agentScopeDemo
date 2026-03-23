@@ -1,4 +1,4 @@
-"""LiteLLM request-context helpers for per-user usage attribution."""
+"""LiteLLM request-context helpers for caller attribution."""
 
 from __future__ import annotations
 
@@ -16,11 +16,14 @@ TENANT_ID_CLAIM = "http://www.aspnetboilerplate.com/identity/claims/tenantId"
 
 @dataclass(frozen=True)
 class LiteLLMRequestContext:
+    """Request-scoped attribution fields attached to one model invocation."""
+
     tenant_id: str
     user_id: str
     end_user_id: str
     app_request_id: str
     agentscope_session_id: str
+    execution_id: str
 
 
 _CURRENT_LITELLM_REQUEST_CONTEXT: ContextVar[LiteLLMRequestContext | None] = (
@@ -43,6 +46,7 @@ def build_litellm_request_context(
     principal: Mapping[str, Any],
     *,
     session_id: str,
+    execution_id: str,
     app_request_id: str,
 ) -> LiteLLMRequestContext:
     tenant_id = _read_required_principal_value(
@@ -64,6 +68,7 @@ def build_litellm_request_context(
         end_user_id=f"{tenant_id}:{user_id}",
         app_request_id=app_request_id,
         agentscope_session_id=session_id,
+        execution_id=execution_id,
     )
 
 
@@ -107,12 +112,15 @@ class ContextAwareOpenAIChatModel(OpenAIChatModel):
 
         metadata = merged_kwargs.get("metadata")
         merged_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        # Keep execution_id explicit so downstream attribution can distinguish
+        # retries or multiple executions under the same caller session_id.
         merged_metadata.update(
             {
                 "tenant_id": context.tenant_id,
                 "user_id": context.user_id,
                 "app_request_id": context.app_request_id,
                 "agentscope_session_id": context.agentscope_session_id,
+                "execution_id": context.execution_id,
             },
         )
         merged_kwargs["metadata"] = merged_metadata
