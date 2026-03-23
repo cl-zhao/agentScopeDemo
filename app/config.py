@@ -170,6 +170,30 @@ class AppConfig(BaseModel):
     ark_api_key: str = Field(description="API key for the OpenAI-compatible endpoint.")
     ark_base_url: str = Field(description="Base URL for the OpenAI-compatible endpoint.")
     ark_model: str = Field(description="Model name.")
+    redis_url: str = Field(
+        default="redis://127.0.0.1:6379/0",
+        description="Redis connection URL for execution control state.",
+    )
+    redis_key_prefix: str = Field(
+        default="ai-engine",
+        description="Key prefix used for execution control records in Redis.",
+    )
+    execution_record_ttl_seconds: int = Field(
+        default=3600,
+        description="TTL for execution status records stored in Redis.",
+    )
+    session_active_ttl_seconds: int = Field(
+        default=900,
+        description="TTL for active session claim records stored in Redis.",
+    )
+    context_recent_message_limit: int = Field(
+        default=8,
+        description="Maximum number of recent messages compiled into one execution.",
+    )
+    context_artifact_char_budget: int = Field(
+        default=12000,
+        description="Character budget reserved for context artifacts during compilation.",
+    )
     model_temperature: float = Field(default=0.2, description="Model temperature.")
     model_max_tokens: int | None = Field(
         default=None,
@@ -226,6 +250,34 @@ class AppConfig(BaseModel):
             ark_api_key=_read_required_env("MODEL_API_KEY"),
             ark_base_url=_read_required_env("MODEL_BASE_URL"),
             ark_model=ark_model,
+            redis_url=os.getenv(
+                "REDIS_URL",
+                default="redis://127.0.0.1:6379/0",
+            ),
+            redis_key_prefix=os.getenv(
+                "REDIS_KEY_PREFIX",
+                default="ai-engine",
+            ),
+            execution_record_ttl_seconds=_read_optional_int_env(
+                "EXECUTION_RECORD_TTL_SECONDS",
+                default=3600,
+            )
+            or 3600,
+            session_active_ttl_seconds=_read_optional_int_env(
+                "SESSION_ACTIVE_TTL_SECONDS",
+                default=900,
+            )
+            or 900,
+            context_recent_message_limit=_read_optional_int_env(
+                "CONTEXT_RECENT_MESSAGE_LIMIT",
+                default=8,
+            )
+            or 8,
+            context_artifact_char_budget=_read_optional_int_env(
+                "CONTEXT_ARTIFACT_CHAR_BUDGET",
+                default=12000,
+            )
+            or 12000,
             model_temperature=_read_optional_float_env(
                 "ARK_TEMPERATURE",
                 default=0.2,
