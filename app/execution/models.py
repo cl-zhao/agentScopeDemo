@@ -17,3 +17,17 @@ class RunningExecutionHandle:
     agent: Any
     task: asyncio.Task | None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass
+class ExecutionRecord:
+    """Redis-backed control-plane record for one execution."""
+
+    execution_id: str
+    session_id: str
+    status: str
+    owner_instance: str
+    started_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
+    last_error: str | None = None
