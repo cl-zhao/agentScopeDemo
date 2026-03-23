@@ -5,3 +5,7 @@ extra_body = {}
 [models."doubao-seed-2-0-mini-260215"]
 allowed_openai_params = ["parallel_tool_calls"]
 extra_body = {}
+
+[models."doubao-seed-2-0-pro-260215"]
+allowed_openai_params = ["parallel_tool_calls"]
+extra_body = {}

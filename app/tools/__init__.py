@@ -5,6 +5,12 @@
 
 from .safe_python import PythonSafetyConfig, SafePythonExecutor
 from .skill_file_reader import SkillFileReader
+from .sqlserver import SQLServerExecutor
 
-__all__ = ["PythonSafetyConfig", "SafePythonExecutor", "SkillFileReader"]
+__all__ = [
+    "PythonSafetyConfig",
+    "SafePythonExecutor",
+    "SkillFileReader",
+    "SQLServerExecutor",
+]
 

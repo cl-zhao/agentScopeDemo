@@ -27,7 +27,7 @@ from app.skills.register_agent_skills import (
     AGENT_SKILL_INSTRUCTION,
     register_agent_skills,
 )
-from app.tools import SafePythonExecutor, SkillFileReader
+from app.tools import SafePythonExecutor, SkillFileReader, SQLServerExecutor
 
 
 class SafeExpressionEvaluator:
@@ -107,6 +107,11 @@ class AgentFactory:
         self.config = config
         self.python_executor = python_executor
         self.expression_evaluator = SafeExpressionEvaluator()
+        self.sqlserver_executor = SQLServerExecutor(
+            connection_string=config.sqlserver_connection_string,
+            max_rows=config.sqlserver_max_rows,
+            query_timeout=config.sqlserver_query_timeout,
+        )
 
     async def get_current_time(self, timezone_name: str = "UTC") -> ToolResponse:
         """获取指定时区的当前时间。
@@ -175,6 +180,43 @@ class AgentFactory:
         """
         return await self.python_executor.execute(code=code, timeout=timeout)
 
+    async def execute_sql_query(self, sql: str, max_rows: int | None = None) -> ToolResponse:
+        """执行 SQL Server 查询。
+
+        仅支持 SELECT 查询，用于 Text2SQL 技能。
+
+        参数:
+            sql: 要执行的 SQL 查询语句。
+            max_rows: 返回的最大行数，默认使用配置值。
+
+        返回:
+            ToolResponse: 包含查询结果的响应。
+        """
+        return await self.sqlserver_executor.execute_query(sql, max_rows)
+
+    async def get_table_schema(self, table_name: str, schema: str = "dbo") -> ToolResponse:
+        """获取 SQL Server 表结构信息。
+
+        参数:
+            table_name: 表名。
+            schema: 架构名，默认 dbo。
+
+        返回:
+            ToolResponse: 包含表结构信息的响应。
+        """
+        return await self.sqlserver_executor.get_table_schema(table_name, schema)
+
+    async def list_database_tables(self, schema: str = "dbo") -> ToolResponse:
+        """列出 SQL Server 数据库中的表。
+
+        参数:
+            schema: 架构名，默认 dbo。
+
+        返回:
+            ToolResponse: 包含表列表的响应。
+        """
+        return await self.sqlserver_executor.list_tables(schema)
+
     async def create_agent(self) -> ReActAgent:
         """构建 ReActAgent 实例。
 
@@ -207,6 +249,11 @@ class AgentFactory:
         toolkit.register_tool_function(self.get_current_time)
         toolkit.register_tool_function(self.evaluate_expression)
         toolkit.register_tool_function(self.safe_execute_python)
+
+        # 注册 SQL Server 工具（用于 Text2SQL 技能）
+        toolkit.register_tool_function(self.execute_sql_query)
+        toolkit.register_tool_function(self.get_table_schema)
+        toolkit.register_tool_function(self.list_database_tables)
 
         await reg_mcp_function_level_usage(toolkit, self.config)
 

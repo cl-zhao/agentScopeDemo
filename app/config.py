@@ -206,6 +206,18 @@ class AppConfig(BaseModel):
         default="http://127.0.0.1:5130/mcp/general/sse",
         description="MCP services host.",
     )
+    sqlserver_connection_string: str = Field(
+        default="",
+        description="SQL Server 连接字符串，格式: DRIVER={ODBC Driver 17 for SQL Server};SERVER=host;DATABASE=db;UID=user;PWD=password",
+    )
+    sqlserver_max_rows: int = Field(
+        default=200,
+        description="SQL 查询返回的最大行数。",
+    )
+    sqlserver_query_timeout: int = Field(
+        default=30,
+        description="SQL 查询超时时间（秒）。",
+    )
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -250,5 +262,19 @@ class AppConfig(BaseModel):
                 default="http://127.0.0.1:5130/mcp/general/sse",
             ),
             mcp_services_transport=_read_mcp_services_transport(),
+            sqlserver_connection_string=os.getenv(
+                "SQLSERVER_CONNECTION_STRING",
+                default="",
+            ),
+            sqlserver_max_rows=_read_optional_int_env(
+                "SQLSERVER_MAX_ROWS",
+                default=200,
+            )
+            or 200,
+            sqlserver_query_timeout=_read_optional_int_env(
+                "SQLSERVER_QUERY_TIMEOUT",
+                default=30,
+            )
+            or 30,
 
         )
