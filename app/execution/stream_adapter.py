@@ -1,4 +1,4 @@
-"""Stream event adaptation for AgentScope messages."""
+"""将 AgentScope 消息适配为流式事件的辅助模块。"""
 
 from __future__ import annotations
 
@@ -13,9 +13,10 @@ from app.agent.mcp_trace import MCP_TRACE_BLOCK_TYPE, normalize_stream_output
 
 
 class StreamEventAdapter:
-    """Converts cumulative AgentScope messages into incremental SSE events."""
+    """将累计式 AgentScope 消息转换为增量式 SSE 事件。"""
 
     def __init__(self) -> None:
+        """初始化用于计算增量流差异的消息级缓存。"""
         self._assistant_text_cache: dict[str, str] = {}
         self._assistant_thinking_cache: dict[str, str] = {}
         self._closed_thinking_messages: set[str] = set()
@@ -27,6 +28,7 @@ class StreamEventAdapter:
         self._mcp_tool_ids: set[str] = set()
 
     def extract_events(self, msg: Msg, is_last: bool) -> list[tuple[str, dict[str, Any]]]:
+        """将一条累计式 AgentScope 消息转换为零个或多个 SSE 事件。"""
         events: list[tuple[str, dict[str, Any]]] = []
 
         if msg.role == "assistant":
@@ -105,18 +107,19 @@ class StreamEventAdapter:
         return events
 
     def _extract_assistant_delta(self, msg: Msg) -> tuple[str, str]:
+        """计算指定消息 ID 新增的 assistant 文本片段。"""
         current_text = msg.get_text_content(separator="\n") or ""
         previous_text = self._assistant_text_cache.get(msg.id, "")
         if current_text.startswith(previous_text):
             delta = current_text[len(previous_text) :]
         else:
-            # If upstream rewrites the whole assistant block, emit the full text to
-            # avoid silently dropping content during stream reconstruction.
+            # 如果上游重写了整段 assistant 内容，则直接发出全文，避免重建流时静默丢字。
             delta = current_text
         self._assistant_text_cache[msg.id] = current_text
         return delta, current_text
 
     def _extract_assistant_thinking_delta(self, msg: Msg) -> tuple[str, str]:
+        """计算指定消息 ID 新增的 assistant thinking 文本片段。"""
         thinking_blocks = msg.get_content_blocks("thinking")
         current_thinking = "\n".join(
             block.get("thinking", "")
@@ -138,6 +141,7 @@ class StreamEventAdapter:
         current_text: str,
         current_thinking: str,
     ) -> bool:
+        """判断是否应在文本开始输出前关闭 thinking 流。"""
         return bool(
             current_text
             and current_thinking
@@ -151,6 +155,7 @@ class StreamEventAdapter:
         current_thinking: str,
         is_last: bool,
     ) -> bool:
+        """判断是否应在消息结束时关闭 thinking 流。"""
         return bool(
             is_last
             and current_thinking
@@ -163,6 +168,7 @@ class StreamEventAdapter:
         *,
         is_last: bool,
     ) -> dict[str, Any] | None:
+        """在工具输入完整后构造一条 started 状态的工具调用事件。"""
         if not is_last:
             return None
 
@@ -188,6 +194,7 @@ class StreamEventAdapter:
         return payload
 
     def _resolve_tool_input(self, block: ToolUseBlock) -> dict[str, Any]:
+        """将原始工具输入规范化为字典载荷。"""
         raw_input = block.get("raw_input")
         if isinstance(raw_input, str) and raw_input.strip():
             with contextlib.suppress(json.JSONDecodeError, TypeError):
@@ -202,6 +209,7 @@ class StreamEventAdapter:
         self,
         block: ToolResultBlock,
     ) -> dict[str, Any] | None:
+        """在结果尚未发送过时构造一条 completed 状态的工具结果事件。"""
         tool_id = block["id"]
         if tool_id in self._mcp_tool_ids:
             return None
@@ -223,6 +231,7 @@ class StreamEventAdapter:
         return payload
 
     def _build_mcp_trace_event(self, block: dict[str, Any]) -> dict[str, Any] | None:
+        """将一条 MCP 轨迹块转换为流式工具事件。"""
         tool_id = block.get("tool_id")
         status = block.get("status")
         if not isinstance(tool_id, str):

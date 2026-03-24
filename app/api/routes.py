@@ -1,4 +1,4 @@
-"""HTTP routes for the stateless execution engine."""
+"""无状态执行引擎的 HTTP 路由。"""
 
 from __future__ import annotations
 
@@ -32,10 +32,12 @@ router = APIRouter(prefix="/v1", tags=["agent"])
 
 
 def _to_sse_data(event: dict) -> str:
+    """将单个事件字典序列化为 SSE 传输格式。"""
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
 def _build_execution_manager(config: AppConfig) -> ExecutionManager:
+    """为当前进程构建默认的执行管理器。"""
     safety_config = PythonSafetyConfig(
         default_timeout=config.python_tool_timeout,
         max_code_length=config.python_tool_max_code_length,
@@ -58,12 +60,19 @@ def _build_execution_manager(config: AppConfig) -> ExecutionManager:
         ),
         context_package_updater=ContextPackageUpdater(
             recent_message_limit=config.context_recent_message_limit,
+            summary_buffer_flush_messages=config.context_summary_buffer_flush_messages,
+            summary_buffer_flush_chars=config.context_summary_buffer_flush_chars,
+            state_pending_question_limit=config.context_state_pending_question_limit,
+            summary_max_items_per_section=config.context_summary_max_items_per_section,
+            summary_message_snippet_length=config.context_summary_message_snippet_length,
+            summary_max_length=config.context_summary_max_length,
         ),
         instance_name=socket.gethostname(),
     )
 
 
 def get_execution_manager(request: Request) -> ExecutionManager:
+    """返回缓存的执行管理器，首次访问时再延迟创建。"""
     manager = getattr(request.app.state, "execution_manager", None)
     if manager is None:
         manager = _build_execution_manager(AppConfig.from_env())
@@ -76,7 +85,9 @@ async def stream_execution(
     request_body: ExecutionStreamRequest,
     manager: ExecutionManager = Depends(get_execution_manager),
 ) -> StreamingResponse:
+    """以 SSE 响应形式暴露主执行流程。"""
     async def event_generator() -> AsyncGenerator[str, None]:
+        """持续产出 SSE 事件帧，并向调用方返回会话冲突错误。"""
         try:
             async for event in manager.stream_execution(request_body):
                 yield _to_sse_data(event)
@@ -107,6 +118,7 @@ async def run_execution(
     request_body: ExecutionStreamRequest,
     manager: ExecutionManager = Depends(get_execution_manager),
 ) -> ExecutionResponse:
+    """执行一次完整请求并返回最终结果。"""
     try:
         return await manager.run_execution(request_body)
     except SessionAlreadyRunningError as exc:
@@ -121,6 +133,7 @@ async def get_execution_status(
     execution_id: str,
     manager: ExecutionManager = Depends(get_execution_manager),
 ) -> ExecutionStatusResponse:
+    """返回指定执行 ID 的持久化状态。"""
     try:
         return await manager.get_execution_status(execution_id)
     except ExecutionNotFoundError as exc:
@@ -135,6 +148,7 @@ async def interrupt_execution(
     execution_id: str,
     manager: ExecutionManager = Depends(get_execution_manager),
 ) -> ExecutionInterruptResponse:
+    """在执行仍在运行时按执行 ID 发起中断。"""
     try:
         return await manager.interrupt_execution(execution_id)
     except ExecutionNotFoundError as exc:
@@ -149,6 +163,7 @@ async def interrupt_session(
     session_id: str,
     manager: ExecutionManager = Depends(get_execution_manager),
 ) -> ExecutionInterruptResponse:
+    """中断当前绑定在指定会话上的活跃执行。"""
     try:
         return await manager.interrupt_session(session_id)
     except ExecutionNotFoundError as exc:
@@ -159,9 +174,11 @@ async def interrupt_session(
 async def debug_raw_model_stream(
     request_body: RawModelStreamRequest,
 ) -> StreamingResponse:
+    """绕过 Agent 运行时，直接代理上游模型流用于调试。"""
     config = AppConfig.from_env()
 
     async def event_generator() -> AsyncGenerator[str, None]:
+        """将上游模型分片持续输出为 SSE 事件，直到流结束。"""
         client = AsyncClient(
             api_key=config.ark_api_key,
             base_url=config.ark_base_url,
@@ -192,7 +209,7 @@ async def debug_raw_model_stream(
                     "payload": {},
                 }
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - 调试流需要向外返回原始异常信息
             yield _to_sse_data(
                 {
                     "event_type": "raw_error",

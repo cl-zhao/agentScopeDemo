@@ -112,6 +112,7 @@ def validate_token(token: str, public_key_base64: str, expected_audience: str) -
 
 
 def test():
+    """运行 JWT 生成与校验的本地冒烟测试。"""
     # 测试用例
     # 显式加载 .env 文件（推荐放在入口文件顶部）
     load_dotenv()

@@ -5,9 +5,24 @@ build/
 dist/
 wheels/
 *.egg-info
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
 # Virtual environments
 .venv
 /.env
 .idea/
 .worktrees/
+.vscode/
+
+# Local environment files
+/.env.*
+!/.env.example
+tests/.env
+
+# Logs
+*.log

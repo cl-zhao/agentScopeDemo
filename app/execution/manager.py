@@ -1,4 +1,4 @@
-"""Execution orchestration for the stateless AI engine."""
+"""无状态 AI 引擎的执行编排器。"""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from app.security.security_manager import get_decrypted_principal
 
 
 class ExecutionManager:
-    """Coordinates one request-scoped ReAct agent execution."""
+    """协调一次请求级别的 ReAct 智能体执行。"""
 
     def __init__(
         self,
@@ -50,6 +50,7 @@ class ExecutionManager:
         stream_adapter: StreamEventAdapter | None = None,
         instance_name: str | None = None,
     ) -> None:
+        """保存无状态运行时执行所需的各项依赖。"""
         self._config = config
         self._factory = factory
         self._store = store
@@ -63,6 +64,7 @@ class ExecutionManager:
         self,
         request: ExecutionStreamRequest,
     ) -> AsyncGenerator[dict[str, Any], None]:
+        """执行一次请求，并持续流式输出生命周期事件直到结束。"""
         execution_id = str(uuid4())
         now = datetime.now(timezone.utc)
         claimed = await self._store.claim_session(
@@ -218,6 +220,7 @@ class ExecutionManager:
             await self._store.clear_interrupt_requested(execution_id)
 
     async def run_execution(self, request: ExecutionStreamRequest) -> ExecutionResponse:
+        """消费流式执行结果，并仅返回最终响应模型。"""
         final_event: dict[str, Any] | None = None
         async for event in self.stream_execution(request):
             if event["event_type"] == "final":
@@ -237,6 +240,7 @@ class ExecutionManager:
         )
 
     async def get_execution_status(self, execution_id: str) -> ExecutionStatusResponse:
+        """读取执行记录并转换为对外状态模型。"""
         record = await self._store.get_execution_record(execution_id)
         if record is None:
             raise ExecutionNotFoundError(execution_id)
@@ -254,6 +258,7 @@ class ExecutionManager:
         self,
         execution_id: str,
     ) -> ExecutionInterruptResponse:
+        """为指定执行发起中断，并在本地可行时立即中断。"""
         record = await self._store.get_execution_record(execution_id)
         if record is None:
             raise ExecutionNotFoundError(execution_id)
@@ -264,8 +269,7 @@ class ExecutionManager:
         )
         handle = self._registry.get(execution_id)
         if handle is not None and handle.task is not None and not handle.task.done():
-            # Local interrupt is best-effort immediate. The stream loop still checks
-            # the Redis flag so remote-worker interruption can share the same path.
+            # 本地中断尽力即时生效；流循环仍会检查 Redis 标记，以便复用远程中断路径。
             await handle.agent.interrupt()
             return ExecutionInterruptResponse(
                 execution_id=execution_id,
@@ -280,6 +284,7 @@ class ExecutionManager:
         )
 
     async def interrupt_session(self, session_id: str) -> ExecutionInterruptResponse:
+        """将会话解析为其活跃执行，并对该执行发起中断。"""
         execution_id = await self._store.get_active_execution_id(session_id)
         if execution_id is None:
             raise ExecutionNotFoundError(session_id)
@@ -292,6 +297,7 @@ class ExecutionManager:
         user_msg: Msg,
         structured_model: type[TaskResultSchema] | None,
     ) -> Msg:
+        """根据是否要求结构化输出来调用智能体。"""
         if structured_model is None:
             return await agent(user_msg)
         return await agent(user_msg, structured_model=structured_model)
@@ -305,6 +311,7 @@ class ExecutionManager:
         task: asyncio.Task,
         collected_artifacts: list[ContextArtifact],
     ) -> AsyncGenerator[dict[str, Any], None]:
+        """在监控中断信号的同时，将队列中的消息转成 SSE 事件。"""
         while True:
             if task.done() and queue.empty():
                 break
@@ -338,6 +345,7 @@ class ExecutionManager:
         session_id: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
+        """构建带时间戳的 SSE 事件包。"""
         return {
             "event_type": event_type,
             "execution_id": execution_id,

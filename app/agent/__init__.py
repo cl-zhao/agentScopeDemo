@@ -1,4 +1,4 @@
-"""Agent construction helpers."""
+"""智能体构建辅助模块。"""
 
 from .factory import AgentFactory
 

@@ -1,4 +1,4 @@
-"""Application configuration loading."""
+"""应用配置加载。"""
 
 from __future__ import annotations
 
@@ -7,13 +7,16 @@ import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_REQUEST_CONFIG_PATH = PROJECT_ROOT / "config" / "model_request.toml"
+ENV_FILE_PATH = PROJECT_ROOT / ".env"
 
 
 def _read_required_env(env_name: str) -> str:
+    """读取必填环境变量，缺失时抛出明确错误。"""
     value = os.getenv(env_name, "").strip()
     if not value:
         raise ValueError(f"Missing required environment variable: {env_name}")
@@ -21,6 +24,7 @@ def _read_required_env(env_name: str) -> str:
 
 
 def _read_optional_float_env(env_name: str, default: float) -> float:
+    """读取可选浮点型环境变量，缺失时返回默认值。"""
     value = os.getenv(env_name)
     if value is None or value.strip() == "":
         return default
@@ -33,6 +37,7 @@ def _read_optional_float_env(env_name: str, default: float) -> float:
 
 
 def _read_optional_int_env(env_name: str, default: int | None) -> int | None:
+    """读取可选整型环境变量，缺失时返回默认值。"""
     value = os.getenv(env_name)
     if value is None or value.strip() == "":
         return default
@@ -48,6 +53,7 @@ def _merge_allowed_openai_params(
         extra_body: dict[str, Any],
         allowed_params: list[str],
 ) -> dict[str, Any]:
+    """将允许透传的 OpenAI 参数合并到请求体中。"""
     if not allowed_params:
         return extra_body
 
@@ -72,6 +78,7 @@ def _merge_json_objects(
         base: dict[str, Any],
         override: dict[str, Any],
 ) -> dict[str, Any]:
+    """递归合并两个类 JSON 字典。"""
     merged = dict(base)
     for key, value in override.items():
         existing = merged.get(key)
@@ -87,6 +94,7 @@ def _validate_request_section(
         *,
         section_name: str,
 ) -> dict[str, Any]:
+    """校验单个 TOML 请求配置段并规范化其结构。"""
     if section is None:
         return {"extra_body": {}, "allowed_openai_params": []}
     if not isinstance(section, dict):
@@ -114,6 +122,7 @@ def _load_model_request_config(
         model_name: str,
         config_path: Path | None = None,
 ) -> dict[str, Any]:
+    """加载指定模型的请求配置覆盖项并完成合并。"""
     if config_path is None:
         config_path = MODEL_REQUEST_CONFIG_PATH
     if not config_path.exists():
@@ -154,7 +163,7 @@ def _load_model_request_config(
 
 
 def _read_mcp_services_transport() -> Literal["streamable_http", "sse"]:
-    """Read MCP services transport from environment variable."""
+    """从环境变量读取 MCP 服务传输协议。"""
     read_mcp_services_transport = os.getenv(
         "MCP_SERVICES_TRANSPORT",
         default="sse",
@@ -193,6 +202,30 @@ class AppConfig(BaseModel):
     context_artifact_char_budget: int = Field(
         default=12000,
         description="Character budget reserved for context artifacts during compilation.",
+    )
+    context_summary_buffer_flush_messages: int = Field(
+        default=4,
+        description="Number of buffered evicted messages that should trigger summary compression.",
+    )
+    context_summary_buffer_flush_chars: int = Field(
+        default=800,
+        description="Character budget in the summary buffer that should trigger summary compression.",
+    )
+    context_summary_max_items_per_section: int = Field(
+        default=6,
+        description="Maximum number of summary bullet items retained per section.",
+    )
+    context_summary_message_snippet_length: int = Field(
+        default=120,
+        description="Maximum snippet length used when folding flushed messages into summary bullets.",
+    )
+    context_summary_max_length: int = Field(
+        default=2000,
+        description="Maximum total character length of the generated summary text.",
+    )
+    context_state_pending_question_limit: int = Field(
+        default=6,
+        description="Maximum number of unresolved state conflict questions retained in task state.",
     )
     model_temperature: float = Field(default=0.2, description="Model temperature.")
     model_max_tokens: int | None = Field(
@@ -245,6 +278,8 @@ class AppConfig(BaseModel):
 
     @classmethod
     def from_env(cls) -> "AppConfig":
+        """从进程环境变量和项目根目录 `.env` 构建应用配置。"""
+        load_dotenv(dotenv_path=ENV_FILE_PATH, override=False)
         ark_model = _read_required_env("MODEL_NAME")
         return cls(
             ark_api_key=_read_required_env("MODEL_API_KEY"),
@@ -278,6 +313,36 @@ class AppConfig(BaseModel):
                 default=12000,
             )
             or 12000,
+            context_summary_buffer_flush_messages=_read_optional_int_env(
+                "CONTEXT_SUMMARY_BUFFER_FLUSH_MESSAGES",
+                default=4,
+            )
+            or 4,
+            context_summary_buffer_flush_chars=_read_optional_int_env(
+                "CONTEXT_SUMMARY_BUFFER_FLUSH_CHARS",
+                default=800,
+            )
+            or 800,
+            context_summary_max_items_per_section=_read_optional_int_env(
+                "CONTEXT_SUMMARY_MAX_ITEMS_PER_SECTION",
+                default=6,
+            )
+            or 6,
+            context_summary_message_snippet_length=_read_optional_int_env(
+                "CONTEXT_SUMMARY_MESSAGE_SNIPPET_LENGTH",
+                default=120,
+            )
+            or 120,
+            context_summary_max_length=_read_optional_int_env(
+                "CONTEXT_SUMMARY_MAX_LENGTH",
+                default=2000,
+            )
+            or 2000,
+            context_state_pending_question_limit=_read_optional_int_env(
+                "CONTEXT_STATE_PENDING_QUESTION_LIMIT",
+                default=6,
+            )
+            or 6,
             model_temperature=_read_optional_float_env(
                 "ARK_TEMPERATURE",
                 default=0.2,

@@ -2,6 +2,7 @@ import os
 
 
 def main():
+    """创建一个最小示例技能目录，便于本地试验。"""
     os.makedirs("sample_skill", exist_ok=True)
     with open("sample_skill/SKILL.md", "w", encoding="utf-8") as f:
         f.write(

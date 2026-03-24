@@ -72,6 +72,7 @@ def get_decrypted_principal(token: str) -> dict[str, object]:
 
 
 def _get_encrypted_data(plain_text: str):
+    """将一段 JSON 字符串加密后写入签名 token 载荷。"""
     # 1. 生成密钥对
     rsa_key = {
         "PublicKey": os.getenv("RSA_CRYPTO_SERVICE_HELPER_PUBLIC_KEY"),
@@ -81,6 +82,7 @@ def _get_encrypted_data(plain_text: str):
 
 
 def _get_decrypted_data(encrypted_text: str) -> dict[str, object]:
+    """将 token 中嵌入的加密载荷解密回字典对象。"""
     # 1. 生成密钥对
     rsa_key = {
         "PrivateKey": os.getenv("RSA_CRYPTO_SERVICE_HELPER_PRIVATE_KEY")
@@ -90,6 +92,7 @@ def _get_decrypted_data(encrypted_text: str) -> dict[str, object]:
 
 
 def test():
+    """运行 token 加解密辅助工具的本地冒烟测试。"""
     # 显式加载 .env 文件（推荐放在入口文件顶部）
     load_dotenv()
     ARK_MODEL = os.getenv("MODEL_NAME")

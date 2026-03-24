@@ -63,3 +63,12 @@ def test_context_package_accepts_artifacts_and_state() -> None:
 
     assert package.state["facts"]["order_id"] == "A-1"
     assert package.artifacts[0].tool_name == "execute_sql_query"
+
+
+def test_context_package_defaults_memory_meta() -> None:
+    package = ContextPackage()
+
+    assert package.memory_meta.turn_count == 0
+    assert package.memory_meta.summary_revision == 0
+    assert package.memory_meta.last_summary_turn == 0
+    assert package.memory_meta.summary_buffer == []

@@ -1,4 +1,4 @@
-"""Deterministic context compilation for stateless executions."""
+"""无状态执行的确定性上下文编译器。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from app.schemas import ContextArtifact, ContextMessage, ContextPackage
 
 @dataclass
 class CompiledContext:
-    """Compiled prompt text plus compilation metadata."""
+    """编译后的提示词文本及其元数据。"""
 
     prompt_text: str
     included_artifact_ids: list[str] = field(default_factory=list)
@@ -18,9 +18,10 @@ class CompiledContext:
 
 
 class ContextCompiler:
-    """Builds one deterministic prompt from a caller-managed context package."""
+    """根据调用方维护的上下文包构建确定性提示词。"""
 
     def __init__(self, *, recent_message_limit: int, artifact_char_budget: int) -> None:
+        """保存最近消息和 artifacts 的编译限制。"""
         self._recent_message_limit = recent_message_limit
         self._artifact_char_budget = artifact_char_budget
 
@@ -30,6 +31,7 @@ class ContextCompiler:
         context_package: ContextPackage,
         current_input: ContextMessage,
     ) -> CompiledContext:
+        """将调用方维护的上下文包编译为提示词载荷。"""
         included_artifact_ids: list[str] = []
         dropped_artifact_ids: list[str] = []
 
@@ -59,11 +61,13 @@ class ContextCompiler:
         )
 
     def _format_state(self, state: dict) -> str:
+        """将结构化状态渲染为确定性的格式化 JSON。"""
         if not state:
             return ""
         return json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True)
 
     def _format_recent_messages(self, messages: list[ContextMessage]) -> str:
+        """以带角色前缀的简单列表格式渲染最近消息。"""
         if not messages:
             return ""
         return "\n".join(f"- {message.role}: {message.content}" for message in messages)
@@ -72,6 +76,7 @@ class ContextCompiler:
         self,
         artifacts: list[ContextArtifact],
     ) -> tuple[list[str], list[str], list[str]]:
+        """在预算内选择 artifacts，并记录被确定性裁掉的条目。"""
         if not artifacts:
             return [], [], []
 
@@ -80,8 +85,7 @@ class ContextCompiler:
         included_ids: list[str] = []
         dropped_ids: list[str] = []
 
-        # High-value artifacts must win under pressure, so selection is ordered by
-        # importance first and original position second for determinism.
+        # 预算紧张时高价值 artifact 必须优先保留，因此先按重要度、再按原始顺序排序。
         ranked = sorted(
             enumerate(artifacts),
             key=lambda item: (self._artifact_rank(item[1].importance), item[0]),
@@ -90,8 +94,7 @@ class ContextCompiler:
         for _index, artifact in ranked:
             line = self._format_artifact(artifact)
             line_cost = len(line)
-            # Once the artifact budget is exhausted we still keep recording drops so
-            # callers can observe what was trimmed out of the compiled context.
+            # 即使预算已经耗尽，也继续记录被裁掉的条目，方便调用方观测裁剪结果。
             if line_cost > remaining_budget:
                 dropped_ids.append(artifact.id)
                 continue
@@ -102,6 +105,7 @@ class ContextCompiler:
         return included_lines, included_ids, dropped_ids
 
     def _format_artifact(self, artifact: ContextArtifact) -> str:
+        """将单个 artifact 渲染为一行提示词文本。"""
         payload = artifact.content
         if isinstance(payload, str):
             rendered_content = payload
@@ -113,5 +117,6 @@ class ContextCompiler:
 
     @staticmethod
     def _artifact_rank(importance: str) -> int:
+        """将文本形式的重要度映射为确定性的排序权重。"""
         order = {"high": 0, "medium": 1, "low": 2}
         return order.get(importance, 3)

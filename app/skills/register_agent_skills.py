@@ -16,7 +16,7 @@ ENABLED_SKILL_DIRS = ("quantity_skill", "intelligent_dispatching","Text2Sql_skil
 
 
 def register_agent_skills(toolkit: Toolkit) -> None:
-    """Register the production skills available to the agent."""
+    """注册当前智能体可用的生产技能。"""
     base_path = Path(__file__).parent
     for directory_name in ENABLED_SKILL_DIRS:
         toolkit.register_agent_skill(str(base_path / directory_name))

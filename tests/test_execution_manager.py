@@ -130,6 +130,12 @@ def build_manager_with_fakes(*, slow: bool = False) -> ExecutionManager:
         ),
         context_package_updater=ContextPackageUpdater(
             recent_message_limit=config.context_recent_message_limit,
+            summary_buffer_flush_messages=config.context_summary_buffer_flush_messages,
+            summary_buffer_flush_chars=config.context_summary_buffer_flush_chars,
+            state_pending_question_limit=config.context_state_pending_question_limit,
+            summary_max_items_per_section=config.context_summary_max_items_per_section,
+            summary_message_snippet_length=config.context_summary_message_snippet_length,
+            summary_max_length=config.context_summary_max_length,
         ),
         instance_name="test-instance",
     )
@@ -232,3 +238,129 @@ async def test_interrupt_execution_marks_result_interrupted(
 
     assert interrupt_result.interrupted is True
     assert any(event["event_type"] == "interrupted" for event in remaining_events)
+
+
+def test_stream_execution_returns_next_context_package_with_memory_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.execution.manager.get_decrypted_principal",
+        lambda _token: {"tenant_id": "tenant-1", "user_id": "user-1"},
+    )
+    manager = build_manager_with_fakes()
+
+    async def _run() -> dict | None:
+        final_event = None
+        async for event in manager.stream_execution(
+            ExecutionStreamRequest(
+                session_id="session-1",
+                access_param="opaque-token",
+                return_context_package=True,
+                context_package=ContextPackage(),
+                current_input=ContextMessage(role="user", content="hello"),
+            )
+        ):
+            if event["event_type"] == "final":
+                final_event = event
+        return final_event
+
+    final_event = asyncio.run(_run())
+
+    assert final_event is not None
+    next_context_package = final_event["payload"]["next_context_package"]
+    assert next_context_package["state"]["facts"] == {}
+    assert next_context_package["state"]["task"] == {}
+    assert next_context_package["state"]["tool_state"] == {}
+    assert next_context_package["state"]["entities"] == {}
+    assert next_context_package["memory_meta"]["turn_count"] == 1
+    assert next_context_package["memory_meta"]["summary_buffer"] == []
+
+
+def test_stream_execution_extracts_user_declared_facts_into_next_context_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.execution.manager.get_decrypted_principal",
+        lambda _token: {"tenant_id": "tenant-1", "user_id": "user-1"},
+    )
+    manager = build_manager_with_fakes()
+
+    async def _run() -> dict | None:
+        final_event = None
+        async for event in manager.stream_execution(
+            ExecutionStreamRequest(
+                session_id="session-1",
+                access_param="opaque-token",
+                return_context_package=True,
+                context_package=ContextPackage(),
+                current_input=ContextMessage(
+                    role="user",
+                    content="order id is A-1 and tracking number is SF123456789CN",
+                ),
+            )
+        ):
+            if event["event_type"] == "final":
+                final_event = event
+        return final_event
+
+    final_event = asyncio.run(_run())
+
+    assert final_event is not None
+    next_context_package = final_event["payload"]["next_context_package"]
+    assert next_context_package["state"]["facts"]["order_id"] == "A-1"
+    assert next_context_package["state"]["facts"]["tracking_no"] == "SF123456789CN"
+
+
+def test_stream_execution_flushes_summary_buffer_into_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.execution.manager.get_decrypted_principal",
+        lambda _token: {"tenant_id": "tenant-1", "user_id": "user-1"},
+    )
+    manager = build_manager_with_fakes()
+
+    async def _run() -> dict | None:
+        final_event = None
+        async for event in manager.stream_execution(
+            ExecutionStreamRequest(
+                session_id="session-1",
+                access_param="opaque-token",
+                return_context_package=True,
+                context_package=ContextPackage(
+                    recent_messages=[
+                        ContextMessage(role="user", content="old-user-1"),
+                        ContextMessage(role="assistant", content="old-assistant-1"),
+                        ContextMessage(role="user", content="old-user-2"),
+                        ContextMessage(role="assistant", content="old-assistant-2"),
+                        ContextMessage(role="user", content="old-user-3"),
+                        ContextMessage(role="assistant", content="old-assistant-3"),
+                        ContextMessage(role="user", content="old-user-4"),
+                        ContextMessage(role="assistant", content="old-assistant-4"),
+                    ],
+                    memory_meta={
+                        "turn_count": 2,
+                        "summary_revision": 0,
+                        "last_summary_turn": 0,
+                        "summary_buffer": [
+                            {"role": "user", "content": "buffered-user"},
+                            {"role": "assistant", "content": "buffered-assistant"},
+                        ],
+                    },
+                ),
+                current_input=ContextMessage(role="user", content="hello"),
+            )
+        ):
+            if event["event_type"] == "final":
+                final_event = event
+        return final_event
+
+    final_event = asyncio.run(_run())
+
+    assert final_event is not None
+    next_context_package = final_event["payload"]["next_context_package"]
+    assert "[背景]" in next_context_package["summary"]
+    assert "[已完成事项]" in next_context_package["summary"]
+    assert next_context_package["memory_meta"]["summary_buffer"] == []
+    assert next_context_package["memory_meta"]["summary_revision"] == 1
+    assert next_context_package["memory_meta"]["last_summary_turn"] == 3

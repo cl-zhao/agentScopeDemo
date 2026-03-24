@@ -1,4 +1,4 @@
-"""HTTP API schema models."""
+"""HTTP API 的数据模型定义。"""
 
 from __future__ import annotations
 
@@ -10,20 +10,20 @@ from pydantic import BaseModel, Field
 
 
 class ResponseMode(str, Enum):
-    """Supported response payload styles for one execution."""
+    """单次执行支持的响应载荷样式。"""
 
     TEXT = "text"
     TASK_RESULT = "task_result"
 
 
 class SessionCreateResponse(BaseModel):
-    """Legacy response for session creation."""
+    """保留用于兼容的旧版会话创建响应。"""
 
     session_id: str = Field(description="Server-generated session identifier.")
 
 
 class ChatStreamRequest(BaseModel):
-    """Legacy stream-chat request model kept for migration compatibility."""
+    """为迁移兼容保留的旧版流式聊天请求模型。"""
 
     message: str = Field(min_length=1, description="User message content.")
     response_mode: ResponseMode = Field(
@@ -37,7 +37,7 @@ class ChatStreamRequest(BaseModel):
 
 
 class RawModelStreamRequest(BaseModel):
-    """Request body for raw upstream model streaming debug."""
+    """用于原始上游模型流调试的请求体。"""
 
     message: str = Field(
         min_length=1,
@@ -46,7 +46,7 @@ class RawModelStreamRequest(BaseModel):
 
 
 class SessionStatusResponse(BaseModel):
-    """Legacy session status response kept for compatibility endpoints."""
+    """为兼容旧接口保留的旧版会话状态响应。"""
 
     session_id: str = Field(description="Session identifier.")
     status: str = Field(description="Session status.")
@@ -58,7 +58,7 @@ class SessionStatusResponse(BaseModel):
 
 
 class InterruptResponse(BaseModel):
-    """Legacy session interrupt response."""
+    """旧版会话中断响应。"""
 
     session_id: str = Field(description="Session identifier.")
     interrupted: bool = Field(description="Whether an interrupt signal was issued.")
@@ -66,7 +66,7 @@ class InterruptResponse(BaseModel):
 
 
 class TaskResultSchema(BaseModel):
-    """Structured task-result response requested via ``response_mode=task_result``."""
+    """当 `response_mode=task_result` 时返回的结构化任务结果。"""
 
     summary: str = Field(description="Task result summary.")
     actions: list[str] = Field(
@@ -84,7 +84,7 @@ class TaskResultSchema(BaseModel):
 
 
 class ContextMessage(BaseModel):
-    """One normalized conversational message entry supplied by the caller."""
+    """调用方传入的一条规范化对话消息。"""
 
     role: Literal["user", "assistant", "system"] = Field(
         description="Semantic role for the message.",
@@ -92,8 +92,23 @@ class ContextMessage(BaseModel):
     content: str = Field(min_length=1, description="Plain-text message content.")
 
 
+class ContextMemoryMeta(BaseModel):
+    """由引擎维护的增量上下文元数据。"""
+
+    turn_count: int = Field(default=0, description="Number of turns accumulated in this package.")
+    summary_revision: int = Field(default=0, description="Number of summary refreshes applied.")
+    last_summary_turn: int = Field(
+        default=0,
+        description="Turn number when summary was last refreshed.",
+    )
+    summary_buffer: list[ContextMessage] = Field(
+        default_factory=list,
+        description="Evicted recent messages awaiting future summary compression.",
+    )
+
+
 class ContextArtifact(BaseModel):
-    """Raw or semi-structured artifact retained from earlier executions."""
+    """从早期执行中保留的原始或半结构化 artifact。"""
 
     id: str = Field(min_length=1, description="Artifact identifier.")
     type: str = Field(min_length=1, description="Artifact type label.")
@@ -115,7 +130,7 @@ class ContextArtifact(BaseModel):
 
 
 class ContextPackage(BaseModel):
-    """Caller-managed context envelope for stateless execution."""
+    """供无状态执行使用、由调用方维护的上下文包。"""
 
     version: str = Field(default="1.0", description="Context package version.")
     summary: str = Field(
@@ -134,10 +149,14 @@ class ContextPackage(BaseModel):
         default_factory=list,
         description="Artifacts retained from prior tool invocations or results.",
     )
+    memory_meta: ContextMemoryMeta = Field(
+        default_factory=ContextMemoryMeta,
+        description="Engine-managed metadata used for incremental memory updates.",
+    )
 
 
 class ExecutionStreamRequest(BaseModel):
-    """Primary stateless execution request model."""
+    """无状态执行的主请求模型。"""
 
     session_id: str = Field(
         min_length=1,
@@ -165,7 +184,7 @@ class ExecutionStreamRequest(BaseModel):
 
 
 class ExecutionResponse(BaseModel):
-    """Final execution response payload for non-streaming endpoints."""
+    """非流式接口返回的最终执行响应。"""
 
     execution_id: str = Field(description="Execution identifier.")
     session_id: str = Field(description="Caller session identifier.")
@@ -183,7 +202,7 @@ class ExecutionResponse(BaseModel):
 
 
 class ExecutionStatusResponse(BaseModel):
-    """Execution status query response."""
+    """执行状态查询响应。"""
 
     execution_id: str = Field(description="Execution identifier.")
     session_id: str = Field(description="Caller session identifier.")
@@ -204,7 +223,7 @@ class ExecutionStatusResponse(BaseModel):
 
 
 class ExecutionInterruptResponse(BaseModel):
-    """Execution interruption response."""
+    """执行中断响应。"""
 
     execution_id: str = Field(description="Execution identifier.")
     interrupted: bool = Field(description="Whether an interrupt signal was issued.")

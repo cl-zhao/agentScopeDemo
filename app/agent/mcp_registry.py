@@ -32,6 +32,7 @@ async def reg_mcp_function_level_usage(toolkit: Toolkit, config: AppConfig, func
 
 
 async def _mcp_function_level_usage(toolkit, stateless_client, func_name):
+    """按名称加载单个 MCP 函数并注册到工具集中。"""
     func_obj1 = await stateless_client.get_callable_function(
         func_name=func_name,
         # 是否将工具结果包装到 AgentScope 的 ToolResponse 中

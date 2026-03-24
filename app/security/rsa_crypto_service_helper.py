@@ -8,13 +8,13 @@ from dotenv import load_dotenv
 
 
 def decrypt(base64_cipher_text: str, base64_private_key: str) -> str:
+    """解密经过 Base64 编码的 RSA OAEP 密文。"""
     # ===================== 注意替换成你C#端原有的密码 =====================
     # 密码编码要和C#端对齐，PKCS8标准默认用UTF8编码，直接把你C#的Password字符串转utf8字节即可
     # 比如C#里Password是"abc123"，这里就写 PASSWORD = "abc123".encode("utf8")
     PASSWORD = os.getenv("RSA_CRYPTO_SERVICE_HELPER_PASSWORD")
     # ===================================================================
 
-    # print(PASSWORD)
     # 1. 解码base64格式的加密私钥
     private_key_bytes = base64.b64decode(base64_private_key)
     # 2. 导入带密码的PKCS8格式私钥，和C#的ImportEncryptedPkcs8PrivateKey完全对齐
@@ -32,6 +32,7 @@ def decrypt(base64_cipher_text: str, base64_private_key: str) -> str:
     return decrypted_bytes.decode("utf8")
 
 def encrypt(plain_text: str, base64_public_key: str) -> str:
+    """使用 RSA 公钥加密明文，并返回 Base64 密文。"""
     # 1. 解码base64格式公钥 → 对应C# Convert.FromBase64String(publicKeyBytes)
     public_key_bytes = base64.b64decode(base64_public_key)
     # 2. 导入X.509格式(SubjectPublicKeyInfo)公钥 → 对应C# ImportSubjectPublicKeyInfo
@@ -49,6 +50,7 @@ def encrypt(plain_text: str, base64_public_key: str) -> str:
     return base64.b64encode(encrypted_bytes).decode("utf8")
 
 def test():
+    """使用环境变量中的密钥运行 RSA 辅助工具本地冒烟测试。"""
     # 测试用例
     # 显式加载 .env 文件（推荐放在入口文件顶部）
     load_dotenv()

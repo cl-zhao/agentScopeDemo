@@ -1,4 +1,4 @@
-"""Execution-layer primitives for the stateless AI engine."""
+"""无状态 AI 执行引擎的执行层基础组件。"""
 
 from app.execution.errors import ExecutionNotFoundError, SessionAlreadyRunningError
 from app.execution.models import ExecutionRecord, RunningExecutionHandle

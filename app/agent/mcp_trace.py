@@ -1,4 +1,4 @@
-"""Helpers for streaming MCP call trace events through AgentScope msg_queue."""
+"""通过 AgentScope `msg_queue` 流式输出 MCP 调用轨迹的辅助工具。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ _MCP_ERROR_PREFIXES = (
 
 
 def normalize_stream_output(output: Any) -> Any:
-    """Normalize tool output into JSON-serializable data."""
+    """将工具输出规范化为可 JSON 序列化的数据。"""
     if isinstance(output, list):
         normalized = []
         for item in output:
@@ -45,7 +45,7 @@ def build_mcp_trace_msg(
     result: Any = None,
     error: str | None = None,
 ) -> Msg:
-    """Build a synthetic Msg used only for SSE streaming."""
+    """构造仅用于 SSE 流式传输的合成消息。"""
     return Msg(
         name="system",
         role="system",
@@ -65,7 +65,7 @@ def build_mcp_trace_msg(
 
 
 def detect_mcp_failure(output: Any) -> str | None:
-    """Infer whether the final MCP output represents a failure."""
+    """判断最终 MCP 输出是否表示失败。"""
     text = _extract_text_output(output)
     if not text:
         return None
@@ -77,12 +77,13 @@ def detect_mcp_failure(output: Any) -> str | None:
 
 
 def register_mcp_tracking_middleware(toolkit: Toolkit, agent: Any) -> None:
-    """Register middleware that emits MCP trace messages into agent.msg_queue."""
+    """注册会向 `agent.msg_queue` 写入 MCP 轨迹消息的中间件。"""
 
     async def mcp_tracking_middleware(
         kwargs: dict[str, Any],
         next_handler: Any,
     ) -> AsyncGenerator[ToolResponse, None]:
+        """在保持原工具结果流程不变的前提下输出 MCP 生命周期事件。"""
         tool_call = kwargs["tool_call"]
         registered_tool = toolkit.tools.get(tool_call["name"])
 
@@ -115,7 +116,7 @@ def register_mcp_tracking_middleware(toolkit: Toolkit, agent: Any) -> None:
                 last_output = copy.deepcopy(response.content)
                 interrupted = interrupted or bool(response.is_interrupted)
                 yield response
-        except Exception as exc:  # noqa: BLE001 - preserve original failure path
+        except Exception as exc:  # noqa: BLE001 - 保持原始失败路径不变
             await _emit_mcp_trace(
                 agent=agent,
                 tool_call=tool_call,
@@ -173,6 +174,7 @@ async def _emit_mcp_trace(
     result: Any = None,
     error: str | None = None,
 ) -> None:
+    """在队列可用时向 Agent 队列推送一条 MCP 轨迹消息。"""
     queue = getattr(agent, "msg_queue", None)
     if queue is None:
         return
@@ -191,6 +193,7 @@ async def _emit_mcp_trace(
 
 
 def _extract_text_output(output: Any) -> str:
+    """从规范化后的 MCP 输出中提取拼接后的文本内容。"""
     if isinstance(output, str):
         return output.strip()
     if not isinstance(output, list):

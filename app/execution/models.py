@@ -1,4 +1,4 @@
-"""Execution-layer data models."""
+"""执行层数据模型。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 
 @dataclass
 class RunningExecutionHandle:
-    """In-process handle for one running execution."""
+    """单个运行中执行在进程内的句柄。"""
 
     execution_id: str
     session_id: str
@@ -21,7 +21,7 @@ class RunningExecutionHandle:
 
 @dataclass
 class ExecutionRecord:
-    """Redis-backed control-plane record for one execution."""
+    """存储在 Redis 中的单次执行控制面记录。"""
 
     execution_id: str
     session_id: str

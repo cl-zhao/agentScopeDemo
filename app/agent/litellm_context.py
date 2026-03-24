@@ -1,4 +1,4 @@
-"""LiteLLM request-context helpers for caller attribution."""
+"""用于调用方归因的 LiteLLM 请求上下文辅助工具。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ TENANT_ID_CLAIM = "http://www.aspnetboilerplate.com/identity/claims/tenantId"
 
 @dataclass(frozen=True)
 class LiteLLMRequestContext:
-    """Request-scoped attribution fields attached to one model invocation."""
+    """附加到单次模型调用上的请求级归因字段。"""
 
     tenant_id: str
     user_id: str
@@ -35,6 +35,7 @@ def _read_required_principal_value(
     principal: Mapping[str, Any],
     *keys: str,
 ) -> str:
+    """从候选字段列表中读取第一个非空的 principal 声明值。"""
     for key in keys:
         value = principal.get(key)
         if isinstance(value, str) and value.strip():
@@ -49,6 +50,7 @@ def build_litellm_request_context(
     execution_id: str,
     app_request_id: str,
 ) -> LiteLLMRequestContext:
+    """将调用方 principal 信息转换为 LiteLLM 归因上下文。"""
     tenant_id = _read_required_principal_value(
         principal,
         TENANT_ID_CLAIM,
@@ -73,25 +75,29 @@ def build_litellm_request_context(
 
 
 def get_current_litellm_request_context() -> LiteLLMRequestContext | None:
+    """返回当前异步调用链绑定的请求上下文。"""
     return _CURRENT_LITELLM_REQUEST_CONTEXT.get()
 
 
 def set_current_litellm_request_context(
     context: LiteLLMRequestContext,
 ) -> Token[LiteLLMRequestContext | None]:
+    """将请求上下文绑定到当前异步调用链，并返回重置令牌。"""
     return _CURRENT_LITELLM_REQUEST_CONTEXT.set(context)
 
 
 def reset_current_litellm_request_context(
     token: Token[LiteLLMRequestContext | None],
 ) -> None:
+    """使用已保存的令牌恢复上一个 LiteLLM 请求上下文。"""
     _CURRENT_LITELLM_REQUEST_CONTEXT.reset(token)
 
 
 class ContextAwareOpenAIChatModel(OpenAIChatModel):
-    """Inject request-scoped LiteLLM fields into each OpenAI-compatible call."""
+    """为每次兼容 OpenAI 的模型调用注入请求级 LiteLLM 字段。"""
 
     async def __call__(self, *args: Any, **kwargs: Any):
+        """附加当前请求元数据后继续转发一次模型调用。"""
         context = get_current_litellm_request_context()
         if context is not None:
             kwargs = self._inject_request_context(kwargs, context)
@@ -102,6 +108,7 @@ class ContextAwareOpenAIChatModel(OpenAIChatModel):
         kwargs: dict[str, Any],
         context: LiteLLMRequestContext,
     ) -> dict[str, Any]:
+        """将归因请求头和元数据合并到模型调用参数中。"""
         merged_kwargs = dict(kwargs)
 
         extra_headers = merged_kwargs.get("extra_headers")
@@ -112,8 +119,7 @@ class ContextAwareOpenAIChatModel(OpenAIChatModel):
 
         metadata = merged_kwargs.get("metadata")
         merged_metadata = dict(metadata) if isinstance(metadata, dict) else {}
-        # Keep execution_id explicit so downstream attribution can distinguish
-        # retries or multiple executions under the same caller session_id.
+        # 显式保留 execution_id，便于下游区分同一 session 下的重试或多次执行。
         merged_metadata.update(
             {
                 "tenant_id": context.tenant_id,
