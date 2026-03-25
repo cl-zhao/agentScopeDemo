@@ -1,11 +1,37 @@
+[global]
+compat_allowed_openai_params = [
+  "parallel_tool_calls",
+  "tool_choice",
+  "reasoning_effort",
+  "frequency_penalty",
+  "presence_penalty",
+  "top_p",
+  "top_k",
+  "min_p",
+  "response_format",
+]
+non_overridable_request_params = [
+  "model",
+  "messages",
+  "stream",
+  "api_key",
+  "base_url",
+]
+
 [default]
-allowed_openai_params = []
+model_params = {}
+extra_allowed_openai_params = []
+blocked_allowed_openai_params = []
 extra_body = {}
 
 [models."doubao-seed-2-0-mini-260215"]
-allowed_openai_params = ["parallel_tool_calls"]
+model_params = {}
+extra_allowed_openai_params = []
+blocked_allowed_openai_params = []
 extra_body = {}
 
 [models."doubao-seed-2-0-pro-260215"]
-allowed_openai_params = ["parallel_tool_calls"]
+model_params = {}
+extra_allowed_openai_params = []
+blocked_allowed_openai_params = []
 extra_body = {}

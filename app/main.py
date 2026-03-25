@@ -30,6 +30,8 @@ def create_app(
     )
     app.include_router(agent_router)
 
+    app.state.app_config = config
+
     if execution_manager is not None:
         app.state.execution_manager = execution_manager
     else:

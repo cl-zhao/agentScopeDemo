@@ -8,6 +8,7 @@ from typing import AsyncGenerator
 
 from fastapi.testclient import TestClient
 
+from app.config import AppConfig, ModelRequestConfig
 from app.main import create_app
 from app.schemas import (
     ExecutionInterruptResponse,
@@ -106,6 +107,35 @@ def test_stream_execution_endpoint() -> None:
     assert response.status_code == 200
     assert events[0]["event_type"] == "execution_started"
     assert events[-1]["event_type"] == "final"
+
+
+def test_stream_execution_rejects_reserved_allowed_openai_param_keys() -> None:
+    app = create_app(
+        execution_manager=FakeExecutionManager(),
+        config=AppConfig(
+            ark_api_key="sk-test",
+            ark_base_url="http://localhost:4000/v1",
+            ark_model="demo-model",
+            model_request_config=ModelRequestConfig(
+                non_overridable_request_params=["model", "messages"],
+            ),
+        ),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/executions/stream",
+        json={
+            "session_id": "session-1",
+            "access_param": "opaque-token",
+            "context_package": {"version": "1.0"},
+            "current_input": {"role": "user", "content": "hello"},
+            "allowed_openai_params": {"model": "override-model"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "allowed_openai_params" in response.json()["detail"]
 
 
 def test_interrupt_by_execution_id_endpoint() -> None:

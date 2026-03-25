@@ -75,17 +75,67 @@ def get_execution_manager(request: Request) -> ExecutionManager:
     """返回缓存的执行管理器，首次访问时再延迟创建。"""
     manager = getattr(request.app.state, "execution_manager", None)
     if manager is None:
-        manager = _build_execution_manager(AppConfig.from_env())
+        config = getattr(request.app.state, "app_config", None)
+        if config is None:
+            config = AppConfig.from_env()
+            request.app.state.app_config = config
+        manager = _build_execution_manager(config)
         request.app.state.execution_manager = manager
     return manager
 
 
+def _resolve_request_config(
+    request: Request,
+    manager: ExecutionManager,
+) -> AppConfig:
+    """解析本次请求应使用的应用配置。"""
+    config = getattr(request.app.state, "app_config", None)
+    if config is not None:
+        return config
+    manager_config = getattr(manager, "_config", None)
+    if manager_config is not None:
+        request.app.state.app_config = manager_config
+        return manager_config
+    config = AppConfig.from_env()
+    request.app.state.app_config = config
+    return config
+
+
+def _validate_allowed_openai_params(
+    request_body: ExecutionStreamRequest,
+    config: AppConfig,
+) -> None:
+    """校验请求级透传参数未覆盖保留字段。"""
+    if not request_body.allowed_openai_params:
+        return
+
+    reserved_keys = set(config.model_request_config.non_overridable_request_params)
+    blocked_keys = [
+        key for key in request_body.allowed_openai_params if key in reserved_keys
+    ]
+    if blocked_keys:
+        joined = ", ".join(blocked_keys)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "allowed_openai_params contains non-overridable keys: "
+                f"{joined}"
+            ),
+        )
+
+
 @router.post("/executions/stream")
 async def stream_execution(
+    request: Request,
     request_body: ExecutionStreamRequest,
     manager: ExecutionManager = Depends(get_execution_manager),
 ) -> StreamingResponse:
     """以 SSE 响应形式暴露主执行流程。"""
+    _validate_allowed_openai_params(
+        request_body=request_body,
+        config=_resolve_request_config(request, manager),
+    )
+
     async def event_generator() -> AsyncGenerator[str, None]:
         """持续产出 SSE 事件帧，并向调用方返回会话冲突错误。"""
         try:
@@ -115,10 +165,15 @@ async def stream_execution(
 
 @router.post("/executions", response_model=ExecutionResponse)
 async def run_execution(
+    request: Request,
     request_body: ExecutionStreamRequest,
     manager: ExecutionManager = Depends(get_execution_manager),
 ) -> ExecutionResponse:
     """执行一次完整请求并返回最终结果。"""
+    _validate_allowed_openai_params(
+        request_body=request_body,
+        config=_resolve_request_config(request, manager),
+    )
     try:
         return await manager.run_execution(request_body)
     except SessionAlreadyRunningError as exc:

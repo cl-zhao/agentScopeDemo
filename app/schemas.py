@@ -178,6 +178,13 @@ class ExecutionStreamRequest(BaseModel):
         default_factory=ContextPackage,
         description="Caller-managed context envelope.",
     )
+    allowed_openai_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Middleware-level valued passthrough params. "
+            "Each key/value pair is intended to be forwarded to LiteLLM."
+        ),
+    )
     current_input: ContextMessage = Field(
         description="The new user turn to execute against the compiled context.",
     )

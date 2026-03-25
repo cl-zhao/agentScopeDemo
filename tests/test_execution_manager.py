@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -99,9 +100,25 @@ class FakeAgent:
 class FakeFactory:
     def __init__(self, *, slow: bool = False) -> None:
         self._slow = slow
+        self.last_request_allowed_openai_params: dict[str, object] | None = None
 
-    async def create_agent(self) -> FakeAgent:
-        return FakeAgent(slow=self._slow)
+    async def create_agent(
+        self,
+        request_allowed_openai_params: dict[str, object] | None = None,
+    ) -> FakeAgent:
+        self.last_request_allowed_openai_params = request_allowed_openai_params
+        agent = FakeAgent(slow=self._slow)
+        request_keys = list((request_allowed_openai_params or {}).keys())
+        agent._litellm_request_diagnostics = {
+            "request_allowed_openai_param_keys": request_keys,
+            "effective_allowed_openai_param_keys": request_keys,
+            "request_overridden_param_keys": request_keys,
+            "final_extra_body_keys": ["allowed_openai_params"] if request_keys else [],
+            "param_sources": {
+                key: "request" for key in request_keys
+            },
+        }
+        return agent
 
 
 def _build_test_config() -> AppConfig:
@@ -119,9 +136,10 @@ def _build_test_config() -> AppConfig:
 
 def build_manager_with_fakes(*, slow: bool = False) -> ExecutionManager:
     config = _build_test_config()
+    factory = FakeFactory(slow=slow)
     return ExecutionManager(
         config=config,
-        factory=FakeFactory(slow=slow),
+        factory=factory,
         store=ExecutionStore(redis_client=FakeRedis(), key_prefix="ai-engine"),
         registry=ExecutionRegistry(),
         compiler=ContextCompiler(
@@ -139,6 +157,32 @@ def build_manager_with_fakes(*, slow: bool = False) -> ExecutionManager:
         ),
         instance_name="test-instance",
     )
+
+
+def build_manager_components_with_fakes(*, slow: bool = False) -> tuple[ExecutionManager, FakeFactory]:
+    config = _build_test_config()
+    factory = FakeFactory(slow=slow)
+    manager = ExecutionManager(
+        config=config,
+        factory=factory,
+        store=ExecutionStore(redis_client=FakeRedis(), key_prefix="ai-engine"),
+        registry=ExecutionRegistry(),
+        compiler=ContextCompiler(
+            recent_message_limit=config.context_recent_message_limit,
+            artifact_char_budget=config.context_artifact_char_budget,
+        ),
+        context_package_updater=ContextPackageUpdater(
+            recent_message_limit=config.context_recent_message_limit,
+            summary_buffer_flush_messages=config.context_summary_buffer_flush_messages,
+            summary_buffer_flush_chars=config.context_summary_buffer_flush_chars,
+            state_pending_question_limit=config.context_state_pending_question_limit,
+            summary_max_items_per_section=config.context_summary_max_items_per_section,
+            summary_message_snippet_length=config.context_summary_message_snippet_length,
+            summary_max_length=config.context_summary_max_length,
+        ),
+        instance_name="test-instance",
+    )
+    return manager, factory
 
 
 async def collect_events(stream: AsyncGenerator[dict, None]) -> list[dict]:
@@ -364,3 +408,86 @@ def test_stream_execution_flushes_summary_buffer_into_summary(
     assert next_context_package["memory_meta"]["summary_buffer"] == []
     assert next_context_package["memory_meta"]["summary_revision"] == 1
     assert next_context_package["memory_meta"]["last_summary_turn"] == 3
+
+
+def test_stream_execution_passes_request_allowed_openai_params_to_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.execution.manager.get_decrypted_principal",
+        lambda _token: {"tenant_id": "tenant-1", "user_id": "user-1"},
+    )
+    manager, factory = build_manager_components_with_fakes()
+
+    async def _run() -> None:
+        async for _event in manager.stream_execution(
+            ExecutionStreamRequest(
+                session_id="session-1",
+                access_param="opaque-token",
+                context_package=ContextPackage(),
+                current_input=ContextMessage(role="user", content="hello"),
+                allowed_openai_params={
+                    "parallel_tool_calls": False,
+                    "reasoning_effort": "high",
+                },
+            )
+        ):
+            pass
+
+    asyncio.run(_run())
+
+    assert factory.last_request_allowed_openai_params == {
+        "parallel_tool_calls": False,
+        "reasoning_effort": "high",
+    }
+
+
+def test_stream_execution_logs_litellm_request_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(
+        "app.execution.manager.get_decrypted_principal",
+        lambda _token: {"tenant_id": "tenant-1", "user_id": "user-1"},
+    )
+    manager, _factory = build_manager_components_with_fakes()
+    caplog.set_level(logging.INFO, logger="app.execution.manager")
+
+    async def _run() -> None:
+        async for _event in manager.stream_execution(
+            ExecutionStreamRequest(
+                session_id="session-1",
+                access_param="opaque-token",
+                context_package=ContextPackage(),
+                current_input=ContextMessage(role="user", content="hello"),
+                allowed_openai_params={
+                    "parallel_tool_calls": False,
+                    "reasoning_effort": "high",
+                },
+            )
+        ):
+            pass
+
+    asyncio.run(_run())
+
+    records = [
+        record for record in caplog.records
+        if record.msg == "litellm_request_diagnostics"
+    ]
+    assert len(records) == 1
+    record = records[0]
+    assert record.session_id == "session-1"
+    assert record.model_name == "test-model"
+    assert record.request_allowed_openai_param_keys == [
+        "parallel_tool_calls",
+        "reasoning_effort",
+    ]
+    assert record.effective_allowed_openai_param_keys == [
+        "parallel_tool_calls",
+        "reasoning_effort",
+    ]
+    assert record.request_overridden_param_keys == [
+        "parallel_tool_calls",
+        "reasoning_effort",
+    ]
+    assert record.final_extra_body_keys == ["allowed_openai_params"]

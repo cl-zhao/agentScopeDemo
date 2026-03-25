@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.schemas import (
     ChatStreamRequest,
     ContextArtifact,
@@ -43,6 +45,36 @@ def test_execution_stream_request_defaults() -> None:
     assert request.return_context_package is False
     assert request.response_mode == ResponseMode.TEXT
     assert request.context_package.version == "1.0"
+    assert request.allowed_openai_params == {}
+
+
+def test_execution_stream_request_accepts_valued_allowed_openai_params() -> None:
+    request = ExecutionStreamRequest(
+        session_id="biz-session-1",
+        access_param="opaque-token",
+        context_package=ContextPackage(),
+        current_input=ContextMessage(role="user", content="hello"),
+        allowed_openai_params={
+            "parallel_tool_calls": False,
+            "reasoning_effort": "high",
+        },
+    )
+
+    assert request.allowed_openai_params == {
+        "parallel_tool_calls": False,
+        "reasoning_effort": "high",
+    }
+
+
+def test_execution_stream_request_rejects_non_object_allowed_openai_params() -> None:
+    with pytest.raises(ValueError, match="allowed_openai_params"):
+        ExecutionStreamRequest(
+            session_id="biz-session-1",
+            access_param="opaque-token",
+            context_package=ContextPackage(),
+            current_input=ContextMessage(role="user", content="hello"),
+            allowed_openai_params=["parallel_tool_calls"],
+        )
 
 
 def test_context_package_accepts_artifacts_and_state() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
@@ -33,6 +34,8 @@ from app.schemas import (
     TaskResultSchema,
 )
 from app.security.security_manager import get_decrypted_principal
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionManager:
@@ -93,45 +96,82 @@ class ExecutionManager:
             context_package=request.context_package,
             current_input=request.current_input,
         )
-        agent = await self._factory.create_agent()
-        queue: asyncio.Queue = asyncio.Queue(maxsize=200)
-        agent.set_msg_queue_enabled(True, queue=queue)
-
-        request_context = build_litellm_request_context(
-            principal,
-            session_id=request.session_id,
-            execution_id=execution_id,
-            app_request_id=str(uuid4()),
-        )
-        context_token = set_current_litellm_request_context(request_context)
-
-        user_msg = Msg(
-            name=request.current_input.role,
-            role=request.current_input.role,
-            content=compiled_context.prompt_text,
-        )
-        structured_model = (
-            TaskResultSchema
-            if request.response_mode == ResponseMode.TASK_RESULT
-            else None
-        )
-
-        running_task = asyncio.create_task(
-            self._run_agent_task(agent=agent, user_msg=user_msg, structured_model=structured_model)
-        )
-        self._registry.register(
-            RunningExecutionHandle(
-                execution_id=execution_id,
-                session_id=request.session_id,
-                agent=agent,
-                task=running_task,
-            )
-        )
-
+        agent = None
+        queue: asyncio.Queue | None = None
+        context_token = None
+        running_task: asyncio.Task | None = None
+        diagnostics: dict[str, Any] = {}
         collected_artifacts: list[ContextArtifact] = []
         final_payload: dict[str, Any] | None = None
 
         try:
+            agent = await self._factory.create_agent(
+                request_allowed_openai_params=request.allowed_openai_params,
+            )
+            raw_diagnostics = getattr(agent, "_litellm_request_diagnostics", {})
+            diagnostics = raw_diagnostics if isinstance(raw_diagnostics, dict) else {}
+            logger.info(
+                "litellm_request_diagnostics",
+                extra={
+                    "session_id": request.session_id,
+                    "model_name": self._config.ark_model,
+                    "request_allowed_openai_param_keys": diagnostics.get(
+                        "request_allowed_openai_param_keys",
+                        list(request.allowed_openai_params.keys()),
+                    ),
+                    "effective_allowed_openai_param_keys": diagnostics.get(
+                        "effective_allowed_openai_param_keys",
+                        [],
+                    ),
+                    "request_overridden_param_keys": diagnostics.get(
+                        "request_overridden_param_keys",
+                        list(request.allowed_openai_params.keys()),
+                    ),
+                    "final_extra_body_keys": diagnostics.get(
+                        "final_extra_body_keys",
+                        [],
+                    ),
+                },
+            )
+
+            queue = asyncio.Queue(maxsize=200)
+            agent.set_msg_queue_enabled(True, queue=queue)
+
+            request_context = build_litellm_request_context(
+                principal,
+                session_id=request.session_id,
+                execution_id=execution_id,
+                app_request_id=str(uuid4()),
+            )
+            context_token = set_current_litellm_request_context(request_context)
+
+            user_msg = Msg(
+                name=request.current_input.role,
+                role=request.current_input.role,
+                content=compiled_context.prompt_text,
+            )
+            structured_model = (
+                TaskResultSchema
+                if request.response_mode == ResponseMode.TASK_RESULT
+                else None
+            )
+
+            running_task = asyncio.create_task(
+                self._run_agent_task(
+                    agent=agent,
+                    user_msg=user_msg,
+                    structured_model=structured_model,
+                )
+            )
+            self._registry.register(
+                RunningExecutionHandle(
+                    execution_id=execution_id,
+                    session_id=request.session_id,
+                    agent=agent,
+                    task=running_task,
+                )
+            )
+
             yield self._build_event(
                 event_type="execution_started",
                 execution_id=execution_id,
@@ -198,6 +238,21 @@ class ExecutionManager:
                 payload=final_payload,
             )
         except Exception as exc:
+            logger.exception(
+                "execution_failed",
+                extra={
+                    "session_id": request.session_id,
+                    "model_name": self._config.ark_model,
+                    "request_allowed_openai_param_keys": diagnostics.get(
+                        "request_allowed_openai_param_keys",
+                        list(request.allowed_openai_params.keys()),
+                    ),
+                    "effective_allowed_openai_param_keys": diagnostics.get(
+                        "effective_allowed_openai_param_keys",
+                        [],
+                    ),
+                },
+            )
             await self._store.update_execution_status(
                 execution_id,
                 "failed",
@@ -213,9 +268,11 @@ class ExecutionManager:
             )
             return
         finally:
-            reset_current_litellm_request_context(context_token)
+            if context_token is not None:
+                reset_current_litellm_request_context(context_token)
             self._registry.pop(execution_id)
-            agent.set_msg_queue_enabled(False)
+            if agent is not None:
+                agent.set_msg_queue_enabled(False)
             await self._store.release_session(request.session_id, execution_id)
             await self._store.clear_interrupt_requested(execution_id)
 

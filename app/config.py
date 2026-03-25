@@ -49,35 +49,33 @@ def _read_optional_int_env(env_name: str, default: int | None) -> int | None:
         ) from exc
 
 
-def _merge_allowed_openai_params(
-        extra_body: dict[str, Any],
-        allowed_params: list[str],
-) -> dict[str, Any]:
-    """将允许透传的 OpenAI 参数合并到请求体中。"""
-    if not allowed_params:
-        return extra_body
-
-    merged = dict(extra_body)
-    existing = merged.get("allowed_openai_params", [])
-    if not isinstance(existing, list) or not all(
-            isinstance(item, str) for item in existing
-    ):
-        raise ValueError(
-            "allowed_openai_params in extra_body must be a list of strings",
-        )
-
-    combined: list[str] = []
-    for item in [*existing, *allowed_params]:
-        if item not in combined:
-            combined.append(item)
-    merged["allowed_openai_params"] = combined
-    return merged
+def _dedupe_strings(items: list[str]) -> list[str]:
+    """按出现顺序去重字符串列表。"""
+    deduped: list[str] = []
+    for item in items:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
 
 
-def _merge_json_objects(
-        base: dict[str, Any],
-        override: dict[str, Any],
-) -> dict[str, Any]:
+def _read_string_array(value: Any, field_name: str) -> list[str]:
+    """读取并校验 TOML 中的字符串数组字段。"""
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{field_name} must be a string array")
+    return _dedupe_strings(value)
+
+
+def _merge_string_lists(*lists: list[str]) -> list[str]:
+    """合并多个字符串列表并按出现顺序去重。"""
+    merged: list[str] = []
+    for items in lists:
+        merged.extend(items)
+    return _dedupe_strings(merged)
+
+
+def _merge_json_objects(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """递归合并两个类 JSON 字典。"""
     merged = dict(base)
     for key, value in override.items():
@@ -89,44 +87,118 @@ def _merge_json_objects(
     return merged
 
 
-def _validate_request_section(
-        section: Any,
-        *,
-        section_name: str,
-) -> dict[str, Any]:
-    """校验单个 TOML 请求配置段并规范化其结构。"""
+def _ensure_disjoint_allowed_lists(
+    *,
+    extra_allowed: list[str],
+    blocked_allowed: list[str],
+    section_name: str,
+) -> None:
+    """确保额外允许名单与屏蔽名单没有交集。"""
+    overlap = [item for item in extra_allowed if item in blocked_allowed]
+    if overlap:
+        joined = ", ".join(overlap)
+        raise ValueError(
+            f"{section_name}.blocked_allowed_openai_params overlaps with "
+            f"{section_name}.extra_allowed_openai_params: {joined}",
+        )
+
+
+class ModelRequestLayerConfig(BaseModel):
+    """单个配置层中的模型请求参数配置。"""
+
+    model_params: dict[str, Any] = Field(default_factory=dict)
+    extra_allowed_openai_params: list[str] = Field(default_factory=list)
+    blocked_allowed_openai_params: list[str] = Field(default_factory=list)
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelRequestConfig(BaseModel):
+    """针对单个模型解析完成后的请求兼容配置。"""
+
+    compat_allowed_openai_params: list[str] = Field(default_factory=list)
+    non_overridable_request_params: list[str] = Field(default_factory=list)
+    model_params: dict[str, Any] = Field(default_factory=dict)
+    extra_allowed_openai_params: list[str] = Field(default_factory=list)
+    blocked_allowed_openai_params: list[str] = Field(default_factory=list)
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def allowed_openai_param_hints(self) -> list[str]:
+        """返回配置层提供的放行名单提示。"""
+        return _merge_string_lists(
+            self.compat_allowed_openai_params,
+            self.extra_allowed_openai_params,
+        )
+
+
+def _validate_request_global_section(section: Any) -> dict[str, list[str]]:
+    """校验 global 配置段并返回规范化结果。"""
     if section is None:
-        return {"extra_body": {}, "allowed_openai_params": []}
+        return {
+            "compat_allowed_openai_params": [],
+            "non_overridable_request_params": [],
+        }
+    if not isinstance(section, dict):
+        raise ValueError("global must be a TOML table")
+
+    return {
+        "compat_allowed_openai_params": _read_string_array(
+            section.get("compat_allowed_openai_params", []),
+            "global.compat_allowed_openai_params",
+        ),
+        "non_overridable_request_params": _read_string_array(
+            section.get("non_overridable_request_params", []),
+            "global.non_overridable_request_params",
+        ),
+    }
+
+
+def _validate_request_layer(section: Any, *, section_name: str) -> ModelRequestLayerConfig:
+    """校验 default 或 models 下的单层请求配置。"""
+    if section is None:
+        return ModelRequestLayerConfig()
     if not isinstance(section, dict):
         raise ValueError(f"{section_name} must be a TOML table")
+
+    model_params = section.get("model_params", {})
+    if not isinstance(model_params, dict):
+        raise ValueError(f"{section_name}.model_params must be a TOML table")
 
     extra_body = section.get("extra_body", {})
     if not isinstance(extra_body, dict):
         raise ValueError(f"{section_name}.extra_body must be a TOML table")
 
-    allowed = section.get("allowed_openai_params", [])
-    if not isinstance(allowed, list) or not all(
-            isinstance(item, str) for item in allowed
-    ):
-        raise ValueError(
-            f"{section_name}.allowed_openai_params must be a string array",
-        )
+    extra_allowed = _read_string_array(
+        section.get("extra_allowed_openai_params", []),
+        f"{section_name}.extra_allowed_openai_params",
+    )
+    blocked_allowed = _read_string_array(
+        section.get("blocked_allowed_openai_params", []),
+        f"{section_name}.blocked_allowed_openai_params",
+    )
+    _ensure_disjoint_allowed_lists(
+        extra_allowed=extra_allowed,
+        blocked_allowed=blocked_allowed,
+        section_name=section_name,
+    )
 
-    return {
-        "extra_body": extra_body,
-        "allowed_openai_params": allowed,
-    }
+    return ModelRequestLayerConfig(
+        model_params=model_params,
+        extra_allowed_openai_params=extra_allowed,
+        blocked_allowed_openai_params=blocked_allowed,
+        extra_body=extra_body,
+    )
 
 
 def _load_model_request_config(
-        model_name: str,
-        config_path: Path | None = None,
-) -> dict[str, Any]:
-    """加载指定模型的请求配置覆盖项并完成合并。"""
+    model_name: str,
+    config_path: Path | None = None,
+) -> ModelRequestConfig:
+    """加载指定模型的请求兼容配置并完成默认层合并。"""
     if config_path is None:
         config_path = MODEL_REQUEST_CONFIG_PATH
     if not config_path.exists():
-        return {}
+        return ModelRequestConfig()
 
     with config_path.open("rb") as file:
         parsed = tomllib.load(file)
@@ -134,31 +206,44 @@ def _load_model_request_config(
     if not isinstance(parsed, dict):
         raise ValueError("Model request config root must be a TOML table")
 
-    default_section = _validate_request_section(
+    global_section = _validate_request_global_section(parsed.get("global"))
+    default_section = _validate_request_layer(
         parsed.get("default"),
         section_name="default",
     )
+
     models_section = parsed.get("models", {})
     if models_section is None:
         models_section = {}
     if not isinstance(models_section, dict):
         raise ValueError("models must be a TOML table")
 
-    model_section = _validate_request_section(
+    model_section = _validate_request_layer(
         models_section.get(model_name),
         section_name=f'models."{model_name}"',
     )
 
-    merged_extra_body = _merge_json_objects(
-        default_section["extra_body"],
-        model_section["extra_body"],
+    extra_allowed = _merge_string_lists(
+        default_section.extra_allowed_openai_params,
+        model_section.extra_allowed_openai_params,
     )
-    return _merge_allowed_openai_params(
-        merged_extra_body,
-        [
-            *default_section["allowed_openai_params"],
-            *model_section["allowed_openai_params"],
-        ],
+    blocked_allowed = _merge_string_lists(
+        default_section.blocked_allowed_openai_params,
+        model_section.blocked_allowed_openai_params,
+    )
+    return ModelRequestConfig(
+        compat_allowed_openai_params=global_section["compat_allowed_openai_params"],
+        non_overridable_request_params=global_section["non_overridable_request_params"],
+        model_params=_merge_json_objects(
+            default_section.model_params,
+            model_section.model_params,
+        ),
+        extra_allowed_openai_params=extra_allowed,
+        blocked_allowed_openai_params=blocked_allowed,
+        extra_body=_merge_json_objects(
+            default_section.extra_body,
+            model_section.extra_body,
+        ),
     )
 
 
@@ -176,96 +261,102 @@ def _read_mcp_services_transport() -> Literal["streamable_http", "sse"]:
 
 
 class AppConfig(BaseModel):
-    ark_api_key: str = Field(description="API key for the OpenAI-compatible endpoint.")
-    ark_base_url: str = Field(description="Base URL for the OpenAI-compatible endpoint.")
-    ark_model: str = Field(description="Model name.")
+    """应用运行时配置。"""
+
+    ark_api_key: str = Field(description="OpenAI 兼容接口的 API Key。")
+    ark_base_url: str = Field(description="OpenAI 兼容接口的基础地址。")
+    ark_model: str = Field(description="默认模型名称。")
     redis_url: str = Field(
         default="redis://127.0.0.1:6379/0",
-        description="Redis connection URL for execution control state.",
+        description="用于执行控制状态的 Redis 连接地址。",
     )
     redis_key_prefix: str = Field(
         default="ai-engine",
-        description="Key prefix used for execution control records in Redis.",
+        description="Redis 中执行控制记录使用的键前缀。",
     )
     execution_record_ttl_seconds: int = Field(
         default=3600,
-        description="TTL for execution status records stored in Redis.",
+        description="Redis 中执行状态记录的过期时间。",
     )
     session_active_ttl_seconds: int = Field(
         default=900,
-        description="TTL for active session claim records stored in Redis.",
+        description="Redis 中会话活跃占用记录的过期时间。",
     )
     context_recent_message_limit: int = Field(
         default=8,
-        description="Maximum number of recent messages compiled into one execution.",
+        description="单次执行编译时纳入的最近消息条数上限。",
     )
     context_artifact_char_budget: int = Field(
         default=12000,
-        description="Character budget reserved for context artifacts during compilation.",
+        description="上下文 artifact 编译时保留的字符预算。",
     )
     context_summary_buffer_flush_messages: int = Field(
         default=4,
-        description="Number of buffered evicted messages that should trigger summary compression.",
+        description="触发 summary 压缩的缓冲消息条数阈值。",
     )
     context_summary_buffer_flush_chars: int = Field(
         default=800,
-        description="Character budget in the summary buffer that should trigger summary compression.",
+        description="触发 summary 压缩的缓冲字符数阈值。",
     )
     context_summary_max_items_per_section: int = Field(
         default=6,
-        description="Maximum number of summary bullet items retained per section.",
+        description="单个 summary 分段保留的最大条目数。",
     )
     context_summary_message_snippet_length: int = Field(
         default=120,
-        description="Maximum snippet length used when folding flushed messages into summary bullets.",
+        description="压缩旧消息时单条摘要片段的最大长度。",
     )
     context_summary_max_length: int = Field(
         default=2000,
-        description="Maximum total character length of the generated summary text.",
+        description="summary 文本的最大总长度。",
     )
     context_state_pending_question_limit: int = Field(
         default=6,
-        description="Maximum number of unresolved state conflict questions retained in task state.",
+        description="状态冲突待确认问题的最大保留数。",
     )
-    model_temperature: float = Field(default=0.2, description="Model temperature.")
+    model_temperature: float = Field(default=0.2, description="模型温度。")
     model_max_tokens: int | None = Field(
         default=None,
-        description="Maximum tokens for one response.",
+        description="单次响应的最大 token 数。",
     )
-    model_extra_body: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional request body forwarded through the gateway.",
+    model_request_config: ModelRequestConfig = Field(
+        default_factory=ModelRequestConfig,
+        description="解析完成后的模型请求兼容配置。",
     )
     system_prompt: str = Field(
         default=(
             "You are a general task assistant. Understand the user's goal first, "
             "use tools when needed, and return clear actionable results."
         ),
-        description="System prompt for the ReAct agent.",
+        description="ReAct 智能体的系统提示词。",
     )
     python_tool_timeout: float = Field(
         default=10.0,
-        description="Default timeout for the restricted Python tool.",
+        description="受限 Python 工具的默认超时时间。",
     )
     python_tool_max_code_length: int = Field(
         default=4000,
-        description="Maximum code length for the restricted Python tool.",
+        description="受限 Python 工具允许的最大代码长度。",
     )
     python_tool_max_output_length: int = Field(
         default=6000,
-        description="Maximum output length for the restricted Python tool.",
+        description="受限 Python 工具允许的最大输出长度。",
     )
     mcp_services_transport: Literal["streamable_http", "sse"] = Field(
         default="sse",
-        description="MCP services transport protocol.",
+        description="MCP 服务的传输协议。",
     )
     mcp_services_host: str = Field(
         default="http://127.0.0.1:5130/mcp/general/sse",
-        description="MCP services host.",
+        description="MCP 服务地址。",
     )
     sqlserver_connection_string: str = Field(
         default="",
-        description="SQL Server 连接字符串，格式: DRIVER={ODBC Driver 17 for SQL Server};SERVER=host;DATABASE=db;UID=user;PWD=password",
+        description=(
+            "SQL Server 连接字符串，格式: "
+            "DRIVER={ODBC Driver 17 for SQL Server};SERVER=host;"
+            "DATABASE=db;UID=user;PWD=password"
+        ),
     )
     sqlserver_max_rows: int = Field(
         default=200,
@@ -275,6 +366,11 @@ class AppConfig(BaseModel):
         default=30,
         description="SQL 查询超时时间（秒）。",
     )
+
+    @property
+    def model_extra_body(self) -> dict[str, Any]:
+        """兼容旧调用路径，返回解析后的额外请求体。"""
+        return dict(self.model_request_config.extra_body)
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -351,7 +447,7 @@ class AppConfig(BaseModel):
                 "ARK_MAX_TOKENS",
                 default=None,
             ),
-            model_extra_body=_load_model_request_config(ark_model),
+            model_request_config=_load_model_request_config(ark_model),
             python_tool_timeout=_read_optional_float_env(
                 "PYTHON_TOOL_TIMEOUT",
                 default=10.0,
@@ -360,12 +456,12 @@ class AppConfig(BaseModel):
                 "PYTHON_TOOL_MAX_CODE_LENGTH",
                 default=4000,
             )
-                                        or 4000,
+            or 4000,
             python_tool_max_output_length=_read_optional_int_env(
                 "PYTHON_TOOL_MAX_OUTPUT_LENGTH",
                 default=6000,
             )
-                                          or 6000,
+            or 6000,
             system_prompt=os.getenv(
                 "AGENT_SYSTEM_PROMPT",
                 (
@@ -393,5 +489,4 @@ class AppConfig(BaseModel):
                 default=30,
             )
             or 30,
-
         )

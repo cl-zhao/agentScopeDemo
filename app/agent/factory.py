@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import ast
-import copy
 import json
 import os
 from datetime import datetime, timezone
@@ -21,6 +20,7 @@ from agentscope.types import JSONSerializableObject
 
 from app.agent.litellm_context import ContextAwareOpenAIChatModel
 from app.agent.mcp_registry import reg_mcp_function_level_usage
+from app.agent.request_params import build_litellm_request
 from app.agent.mcp_trace import register_mcp_tracking_middleware
 from app.config import AppConfig
 from app.skills.register_agent_skills import (
@@ -217,23 +217,21 @@ class AgentFactory:
         """
         return await self.sqlserver_executor.list_tables(schema)
 
-    async def create_agent(self) -> ReActAgent:
+    async def create_agent(
+        self,
+        request_allowed_openai_params: dict[str, JSONSerializableObject] | None = None,
+    ) -> ReActAgent:
         """构建 ReActAgent 实例。
 
         返回:
             ReActAgent: 完整初始化后的智能体。
         """
-        generate_kwargs: dict[str, JSONSerializableObject] = {
-            "temperature": self.config.model_temperature,
-            # 模型层面同时打开并行工具调用参数。
-            "parallel_tool_calls": True,
-        }
-        if self.config.model_max_tokens is not None:
-            generate_kwargs["max_tokens"] = self.config.model_max_tokens
-        if self.config.model_extra_body:
-            generate_kwargs["extra_body"] = copy.deepcopy(
-                self.config.model_extra_body,
-            )
+        built_request = build_litellm_request(
+            model_temperature=self.config.model_temperature,
+            model_max_tokens=self.config.model_max_tokens,
+            model_request_config=self.config.model_request_config,
+            request_allowed_openai_params=request_allowed_openai_params,
+        )
 
         model = ContextAwareOpenAIChatModel(
             model_name=self.config.ark_model,
@@ -242,7 +240,7 @@ class AgentFactory:
             client_kwargs={
                 "base_url": self.config.ark_base_url,
             },
-            generate_kwargs=generate_kwargs,
+            generate_kwargs=built_request.generate_kwargs,
         )
 
         toolkit = Toolkit(agent_skill_instruction=AGENT_SKILL_INSTRUCTION)
@@ -277,8 +275,21 @@ class AgentFactory:
         # Memory 对单次执行内部的智能体循环仍然有价值，
         # 但它必须保持请求级作用域，并在响应结束后丢弃。
             memory=InMemoryMemory(),
-            parallel_tool_calls=True,
+            parallel_tool_calls=built_request.agent_parallel_tool_calls,
         )
+        agent._litellm_request_diagnostics = {
+            "request_allowed_openai_param_keys": (
+                built_request.request_allowed_openai_param_keys
+            ),
+            "effective_allowed_openai_param_keys": (
+                built_request.effective_allowed_openai_param_keys
+            ),
+            "request_overridden_param_keys": (
+                built_request.request_overridden_param_keys
+            ),
+            "final_extra_body_keys": built_request.final_extra_body_keys,
+            "param_sources": built_request.param_sources,
+        }
 
         # HTTP 服务模式下关闭终端打印，避免日志污染。
         # 开发环境下开启控制台日志

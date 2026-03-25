@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app import config as config_module
 from app.config import AppConfig
 
 
-def test_from_env_loads_model_extra_body_from_toml(
-    monkeypatch,
+def test_from_env_loads_structured_model_request_config_from_toml(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
     monkeypatch.setenv("MODEL_API_KEY", "sk-test")
@@ -18,13 +20,21 @@ def test_from_env_loads_model_extra_body_from_toml(
     config_file.write_text(
         "\n".join(
             [
+                "[global]",
+                'compat_allowed_openai_params = ["parallel_tool_calls", "response_format"]',
+                'non_overridable_request_params = ["model", "messages"]',
+                "",
                 "[default]",
-                'allowed_openai_params = ["response_format"]',
-                'extra_body = { provider_route = "lite" }',
+                'model_params = { tool_choice = "auto", response_format = "json_object" }',
+                'extra_allowed_openai_params = ["reasoning_effort"]',
+                'blocked_allowed_openai_params = ["response_format"]',
+                'extra_body = { provider_route = "lite", nested = { source = "default" } }',
                 "",
                 '[models."demo-model"]',
-                'allowed_openai_params = ["parallel_tool_calls", "tool_choice"]',
-                'extra_body = { route = "local" }',
+                'model_params = { response_format = "json_schema", top_p = 0.8 }',
+                'extra_allowed_openai_params = ["frequency_penalty"]',
+                'blocked_allowed_openai_params = ["reasoning_effort"]',
+                'extra_body = { route = "local", nested = { source = "model" } }',
             ],
         ),
         encoding="utf-8",
@@ -33,18 +43,74 @@ def test_from_env_loads_model_extra_body_from_toml(
 
     config = AppConfig.from_env()
 
-    assert config.model_extra_body == {
+    assert config.model_request_config.compat_allowed_openai_params == [
+        "parallel_tool_calls",
+        "response_format",
+    ]
+    assert config.model_request_config.non_overridable_request_params == [
+        "model",
+        "messages",
+    ]
+    assert config.model_request_config.model_params == {
+        "tool_choice": "auto",
+        "response_format": "json_schema",
+        "top_p": 0.8,
+    }
+    assert config.model_request_config.extra_allowed_openai_params == [
+        "reasoning_effort",
+        "frequency_penalty",
+    ]
+    assert config.model_request_config.blocked_allowed_openai_params == [
+        "response_format",
+        "reasoning_effort",
+    ]
+    assert config.model_request_config.extra_body == {
         "provider_route": "lite",
         "route": "local",
-        "allowed_openai_params": [
-            "response_format",
-            "parallel_tool_calls",
-            "tool_choice",
-        ],
+        "nested": {"source": "model"},
     }
 
 
-def test_app_config_reads_execution_engine_env(monkeypatch) -> None:
+def test_from_env_rejects_invalid_model_request_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("MODEL_API_KEY", "sk-test")
+    monkeypatch.setenv("MODEL_BASE_URL", "http://localhost:4000/v1")
+    monkeypatch.setenv("MODEL_NAME", "demo-model")
+
+    config_file = tmp_path / "model_request.toml"
+    config_file.write_text(
+        "\n".join(
+            [
+                "[global]",
+                'compat_allowed_openai_params = ["parallel_tool_calls"]',
+                'non_overridable_request_params = ["model"]',
+                "",
+                "[default]",
+                'model_params = { tool_choice = "auto" }',
+                'extra_allowed_openai_params = ["reasoning_effort"]',
+                'blocked_allowed_openai_params = ["reasoning_effort"]',
+                'extra_body = { provider_route = "lite" }',
+                "",
+                '[models."demo-model"]',
+                'model_params = "not-a-table"',
+            ],
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_module, "MODEL_REQUEST_CONFIG_PATH", config_file)
+
+    with pytest.raises(
+        ValueError,
+        match="blocked_allowed_openai_params",
+    ):
+        AppConfig.from_env()
+
+
+def test_app_config_reads_execution_engine_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("MODEL_API_KEY", "sk-test")
     monkeypatch.setenv("MODEL_BASE_URL", "http://localhost:4000/v1")
     monkeypatch.setenv("MODEL_NAME", "demo-model")
@@ -77,7 +143,10 @@ def test_app_config_reads_execution_engine_env(monkeypatch) -> None:
     assert config.context_state_pending_question_limit == 3
 
 
-def test_app_config_reads_redis_url_from_dotenv(monkeypatch, tmp_path) -> None:
+def test_app_config_reads_redis_url_from_dotenv(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
     monkeypatch.setenv("MODEL_API_KEY", "sk-test")
     monkeypatch.setenv("MODEL_BASE_URL", "http://localhost:4000/v1")
     monkeypatch.setenv("MODEL_NAME", "demo-model")
