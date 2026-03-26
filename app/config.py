@@ -98,8 +98,8 @@ def _ensure_disjoint_allowed_lists(
     if overlap:
         joined = ", ".join(overlap)
         raise ValueError(
-            f"{section_name}.blocked_allowed_openai_params overlaps with "
-            f"{section_name}.extra_allowed_openai_params: {joined}",
+            f"{section_name}.blocked_keys overlaps with "
+            f"{section_name}.extra_keys: {joined}",
         )
 
 

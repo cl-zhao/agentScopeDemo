@@ -106,7 +106,8 @@ class ExecutionManager:
 
         try:
             agent = await self._factory.create_agent(
-                request_allowed_openai_params=request.allowed_openai_params,
+                request_openai_params=request.openai_params,
+                request_provider_params=request.provider_params,
             )
             raw_diagnostics = getattr(agent, "_litellm_request_diagnostics", {})
             diagnostics = raw_diagnostics if isinstance(raw_diagnostics, dict) else {}
@@ -115,22 +116,27 @@ class ExecutionManager:
                 extra={
                     "session_id": request.session_id,
                     "model_name": self._config.ark_model,
-                    "request_allowed_openai_param_keys": diagnostics.get(
-                        "request_allowed_openai_param_keys",
-                        list(request.allowed_openai_params.keys()),
+                    "request_openai_param_keys": diagnostics.get(
+                        "request_openai_param_keys",
+                        list(request.openai_params.keys()),
                     ),
-                    "effective_allowed_openai_param_keys": diagnostics.get(
-                        "effective_allowed_openai_param_keys",
+                    "request_provider_param_keys": diagnostics.get(
+                        "request_provider_param_keys",
+                        list(request.provider_params.keys()),
+                    ),
+                    "generated_allowed_openai_param_keys": diagnostics.get(
+                        "generated_allowed_openai_param_keys",
                         [],
                     ),
-                    "request_overridden_param_keys": diagnostics.get(
-                        "request_overridden_param_keys",
-                        list(request.allowed_openai_params.keys()),
+                    "final_top_level_param_keys": diagnostics.get(
+                        "final_top_level_param_keys",
+                        [],
                     ),
                     "final_extra_body_keys": diagnostics.get(
                         "final_extra_body_keys",
                         [],
                     ),
+                    "param_sources": diagnostics.get("param_sources", {}),
                 },
             )
 
@@ -243,14 +249,27 @@ class ExecutionManager:
                 extra={
                     "session_id": request.session_id,
                     "model_name": self._config.ark_model,
-                    "request_allowed_openai_param_keys": diagnostics.get(
-                        "request_allowed_openai_param_keys",
-                        list(request.allowed_openai_params.keys()),
+                    "request_openai_param_keys": diagnostics.get(
+                        "request_openai_param_keys",
+                        list(request.openai_params.keys()),
                     ),
-                    "effective_allowed_openai_param_keys": diagnostics.get(
-                        "effective_allowed_openai_param_keys",
+                    "request_provider_param_keys": diagnostics.get(
+                        "request_provider_param_keys",
+                        list(request.provider_params.keys()),
+                    ),
+                    "generated_allowed_openai_param_keys": diagnostics.get(
+                        "generated_allowed_openai_param_keys",
                         [],
                     ),
+                    "final_top_level_param_keys": diagnostics.get(
+                        "final_top_level_param_keys",
+                        [],
+                    ),
+                    "final_extra_body_keys": diagnostics.get(
+                        "final_extra_body_keys",
+                        [],
+                    ),
+                    "param_sources": diagnostics.get("param_sources", {}),
                 },
             )
             await self._store.update_execution_status(

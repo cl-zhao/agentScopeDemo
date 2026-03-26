@@ -109,7 +109,7 @@ def test_stream_execution_endpoint() -> None:
     assert events[-1]["event_type"] == "final"
 
 
-def test_stream_execution_rejects_reserved_allowed_openai_param_keys() -> None:
+def test_stream_execution_rejects_reserved_openai_param_keys() -> None:
     app = create_app(
         execution_manager=FakeExecutionManager(),
         config=AppConfig(
@@ -117,7 +117,8 @@ def test_stream_execution_rejects_reserved_allowed_openai_param_keys() -> None:
             ark_base_url="http://localhost:4000/v1",
             ark_model="demo-model",
             model_request_config=ModelRequestConfig(
-                non_overridable_request_params=["model", "messages"],
+                non_overridable_openai_params=["model", "messages"],
+                non_overridable_provider_params=["allowed_openai_params", "extra_body"],
             ),
         ),
     )
@@ -130,12 +131,42 @@ def test_stream_execution_rejects_reserved_allowed_openai_param_keys() -> None:
             "access_param": "opaque-token",
             "context_package": {"version": "1.0"},
             "current_input": {"role": "user", "content": "hello"},
-            "allowed_openai_params": {"model": "override-model"},
+            "openai_params": {"model": "override-model"},
         },
     )
 
     assert response.status_code == 400
-    assert "allowed_openai_params" in response.json()["detail"]
+    assert "openai_params" in response.json()["detail"]
+
+
+def test_stream_execution_rejects_reserved_provider_param_keys() -> None:
+    app = create_app(
+        execution_manager=FakeExecutionManager(),
+        config=AppConfig(
+            ark_api_key="sk-test",
+            ark_base_url="http://localhost:4000/v1",
+            ark_model="demo-model",
+            model_request_config=ModelRequestConfig(
+                non_overridable_openai_params=["model", "messages"],
+                non_overridable_provider_params=["allowed_openai_params", "extra_body"],
+            ),
+        ),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/executions/stream",
+        json={
+            "session_id": "session-1",
+            "access_param": "opaque-token",
+            "context_package": {"version": "1.0"},
+            "current_input": {"role": "user", "content": "hello"},
+            "provider_params": {"allowed_openai_params": ["top_k"]},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "provider_params" in response.json()["detail"]
 
 
 def test_interrupt_by_execution_id_endpoint() -> None:

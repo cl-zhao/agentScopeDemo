@@ -100,23 +100,48 @@ class FakeAgent:
 class FakeFactory:
     def __init__(self, *, slow: bool = False) -> None:
         self._slow = slow
-        self.last_request_allowed_openai_params: dict[str, object] | None = None
+        self.last_request_openai_params: dict[str, object] | None = None
+        self.last_request_provider_params: dict[str, object] | None = None
 
     async def create_agent(
         self,
-        request_allowed_openai_params: dict[str, object] | None = None,
+        request_openai_params: dict[str, object] | None = None,
+        request_provider_params: dict[str, object] | None = None,
     ) -> FakeAgent:
-        self.last_request_allowed_openai_params = request_allowed_openai_params
+        self.last_request_openai_params = request_openai_params
+        self.last_request_provider_params = request_provider_params
         agent = FakeAgent(slow=self._slow)
-        request_keys = list((request_allowed_openai_params or {}).keys())
+        request_openai_keys = list((request_openai_params or {}).keys())
+        request_provider_keys = list((request_provider_params or {}).keys())
+        final_extra_body_keys = list(request_provider_keys)
+        if request_openai_keys:
+            final_extra_body_keys.append("allowed_openai_params")
+
+        param_sources = {
+            key: "request_openai" for key in request_openai_keys
+        }
+        param_sources.update(
+            {
+                f"extra_body.{key}": "request_provider"
+                for key in request_provider_keys
+            }
+        )
+        if request_openai_keys:
+            param_sources["extra_body.allowed_openai_params"] = (
+                "generated_allowed_openai_passthrough"
+            )
+
         agent._litellm_request_diagnostics = {
-            "request_allowed_openai_param_keys": request_keys,
-            "effective_allowed_openai_param_keys": request_keys,
-            "request_overridden_param_keys": request_keys,
-            "final_extra_body_keys": ["allowed_openai_params"] if request_keys else [],
-            "param_sources": {
-                key: "request" for key in request_keys
-            },
+            "request_openai_param_keys": request_openai_keys,
+            "request_provider_param_keys": request_provider_keys,
+            "generated_allowed_openai_param_keys": request_openai_keys,
+            "final_top_level_param_keys": [
+                "temperature",
+                *request_openai_keys,
+                *(["extra_body"] if final_extra_body_keys else []),
+            ],
+            "final_extra_body_keys": final_extra_body_keys,
+            "param_sources": param_sources,
         }
         return agent
 
@@ -410,7 +435,7 @@ def test_stream_execution_flushes_summary_buffer_into_summary(
     assert next_context_package["memory_meta"]["last_summary_turn"] == 3
 
 
-def test_stream_execution_passes_request_allowed_openai_params_to_factory(
+def test_stream_execution_passes_split_request_params_to_factory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -426,20 +451,22 @@ def test_stream_execution_passes_request_allowed_openai_params_to_factory(
                 access_param="opaque-token",
                 context_package=ContextPackage(),
                 current_input=ContextMessage(role="user", content="hello"),
-                allowed_openai_params={
+                openai_params={
                     "parallel_tool_calls": False,
                     "reasoning_effort": "high",
                 },
+                provider_params={"top_k": 16},
             )
         ):
             pass
 
     asyncio.run(_run())
 
-    assert factory.last_request_allowed_openai_params == {
+    assert factory.last_request_openai_params == {
         "parallel_tool_calls": False,
         "reasoning_effort": "high",
     }
+    assert factory.last_request_provider_params == {"top_k": 16}
 
 
 def test_stream_execution_logs_litellm_request_diagnostics(
@@ -460,10 +487,11 @@ def test_stream_execution_logs_litellm_request_diagnostics(
                 access_param="opaque-token",
                 context_package=ContextPackage(),
                 current_input=ContextMessage(role="user", content="hello"),
-                allowed_openai_params={
+                openai_params={
                     "parallel_tool_calls": False,
                     "reasoning_effort": "high",
                 },
+                provider_params={"top_k": 16},
             )
         ):
             pass
@@ -478,16 +506,19 @@ def test_stream_execution_logs_litellm_request_diagnostics(
     record = records[0]
     assert record.session_id == "session-1"
     assert record.model_name == "test-model"
-    assert record.request_allowed_openai_param_keys == [
+    assert record.request_openai_param_keys == [
         "parallel_tool_calls",
         "reasoning_effort",
     ]
-    assert record.effective_allowed_openai_param_keys == [
+    assert record.request_provider_param_keys == ["top_k"]
+    assert record.generated_allowed_openai_param_keys == [
         "parallel_tool_calls",
         "reasoning_effort",
     ]
-    assert record.request_overridden_param_keys == [
+    assert record.final_top_level_param_keys == [
+        "temperature",
         "parallel_tool_calls",
         "reasoning_effort",
+        "extra_body",
     ]
-    assert record.final_extra_body_keys == ["allowed_openai_params"]
+    assert record.final_extra_body_keys == ["top_k", "allowed_openai_params"]

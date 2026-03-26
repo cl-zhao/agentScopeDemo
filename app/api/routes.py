@@ -1,4 +1,4 @@
-"""无状态执行引擎的 HTTP 路由。"""
+"""HTTP routes for the stateless execution engine."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from openai import AsyncClient
 from redis.asyncio import Redis
 
 from app.agent.factory import AgentFactory
+from app.agent.request_params import RESERVED_PROVIDER_PARAMS
 from app.config import AppConfig
 from app.execution.context_compiler import ContextCompiler
 from app.execution.context_package import ContextPackageUpdater
@@ -32,12 +33,12 @@ router = APIRouter(prefix="/v1", tags=["agent"])
 
 
 def _to_sse_data(event: dict) -> str:
-    """将单个事件字典序列化为 SSE 传输格式。"""
+    """Serialize one event as an SSE frame."""
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
 def _build_execution_manager(config: AppConfig) -> ExecutionManager:
-    """为当前进程构建默认的执行管理器。"""
+    """Build the default execution manager for the current process."""
     safety_config = PythonSafetyConfig(
         default_timeout=config.python_tool_timeout,
         max_code_length=config.python_tool_max_code_length,
@@ -72,7 +73,7 @@ def _build_execution_manager(config: AppConfig) -> ExecutionManager:
 
 
 def get_execution_manager(request: Request) -> ExecutionManager:
-    """返回缓存的执行管理器，首次访问时再延迟创建。"""
+    """Return the cached execution manager, creating it lazily."""
     manager = getattr(request.app.state, "execution_manager", None)
     if manager is None:
         config = getattr(request.app.state, "app_config", None)
@@ -88,39 +89,62 @@ def _resolve_request_config(
     request: Request,
     manager: ExecutionManager,
 ) -> AppConfig:
-    """解析本次请求应使用的应用配置。"""
+    """Resolve the app config used for the current request."""
     config = getattr(request.app.state, "app_config", None)
     if config is not None:
         return config
+
     manager_config = getattr(manager, "_config", None)
     if manager_config is not None:
         request.app.state.app_config = manager_config
         return manager_config
+
     config = AppConfig.from_env()
     request.app.state.app_config = config
     return config
 
 
-def _validate_allowed_openai_params(
+def _validate_request_params(
     request_body: ExecutionStreamRequest,
     config: AppConfig,
 ) -> None:
-    """校验请求级透传参数未覆盖保留字段。"""
-    if not request_body.allowed_openai_params:
-        return
-
-    reserved_keys = set(config.model_request_config.non_overridable_request_params)
-    blocked_keys = [
-        key for key in request_body.allowed_openai_params if key in reserved_keys
+    """Validate request-level OpenAI/provider params before execution starts."""
+    overlapping_keys = [
+        key for key in request_body.openai_params if key in request_body.provider_params
     ]
-    if blocked_keys:
-        joined = ", ".join(blocked_keys)
+    if overlapping_keys:
+        joined = ", ".join(overlapping_keys)
         raise HTTPException(
             status_code=400,
-            detail=(
-                "allowed_openai_params contains non-overridable keys: "
-                f"{joined}"
-            ),
+            detail=f"openai_params and provider_params must be disjoint: {joined}",
+        )
+
+    blocked_openai_keys = [
+        key
+        for key in request_body.openai_params
+        if key in set(config.model_request_config.non_overridable_openai_params)
+    ]
+    if blocked_openai_keys:
+        joined = ", ".join(blocked_openai_keys)
+        raise HTTPException(
+            status_code=400,
+            detail=f"openai_params contains non-overridable keys: {joined}",
+        )
+
+    reserved_provider_keys = [
+        key
+        for key in request_body.provider_params
+        if key
+        in (
+            RESERVED_PROVIDER_PARAMS
+            | set(config.model_request_config.non_overridable_provider_params)
+        )
+    ]
+    if reserved_provider_keys:
+        joined = ", ".join(reserved_provider_keys)
+        raise HTTPException(
+            status_code=400,
+            detail=f"provider_params contains reserved keys: {joined}",
         )
 
 
@@ -130,14 +154,13 @@ async def stream_execution(
     request_body: ExecutionStreamRequest,
     manager: ExecutionManager = Depends(get_execution_manager),
 ) -> StreamingResponse:
-    """以 SSE 响应形式暴露主执行流程。"""
-    _validate_allowed_openai_params(
+    """Expose the execution lifecycle as an SSE stream."""
+    _validate_request_params(
         request_body=request_body,
         config=_resolve_request_config(request, manager),
     )
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        """持续产出 SSE 事件帧，并向调用方返回会话冲突错误。"""
         try:
             async for event in manager.stream_execution(request_body):
                 yield _to_sse_data(event)
@@ -169,8 +192,8 @@ async def run_execution(
     request_body: ExecutionStreamRequest,
     manager: ExecutionManager = Depends(get_execution_manager),
 ) -> ExecutionResponse:
-    """执行一次完整请求并返回最终结果。"""
-    _validate_allowed_openai_params(
+    """Execute one request and return the final response payload."""
+    _validate_request_params(
         request_body=request_body,
         config=_resolve_request_config(request, manager),
     )
@@ -180,15 +203,12 @@ async def run_execution(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.get(
-    "/executions/{execution_id}",
-    response_model=ExecutionStatusResponse,
-)
+@router.get("/executions/{execution_id}", response_model=ExecutionStatusResponse)
 async def get_execution_status(
     execution_id: str,
     manager: ExecutionManager = Depends(get_execution_manager),
 ) -> ExecutionStatusResponse:
-    """返回指定执行 ID 的持久化状态。"""
+    """Return the persisted status of an execution."""
     try:
         return await manager.get_execution_status(execution_id)
     except ExecutionNotFoundError as exc:
@@ -203,7 +223,7 @@ async def interrupt_execution(
     execution_id: str,
     manager: ExecutionManager = Depends(get_execution_manager),
 ) -> ExecutionInterruptResponse:
-    """在执行仍在运行时按执行 ID 发起中断。"""
+    """Interrupt a specific execution by id."""
     try:
         return await manager.interrupt_execution(execution_id)
     except ExecutionNotFoundError as exc:
@@ -218,7 +238,7 @@ async def interrupt_session(
     session_id: str,
     manager: ExecutionManager = Depends(get_execution_manager),
 ) -> ExecutionInterruptResponse:
-    """中断当前绑定在指定会话上的活跃执行。"""
+    """Interrupt the active execution attached to a session."""
     try:
         return await manager.interrupt_session(session_id)
     except ExecutionNotFoundError as exc:
@@ -229,11 +249,10 @@ async def interrupt_session(
 async def debug_raw_model_stream(
     request_body: RawModelStreamRequest,
 ) -> StreamingResponse:
-    """绕过 Agent 运行时，直接代理上游模型流用于调试。"""
+    """Proxy the upstream model stream directly for debugging."""
     config = AppConfig.from_env()
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        """将上游模型分片持续输出为 SSE 事件，直到流结束。"""
         client = AsyncClient(
             api_key=config.ark_api_key,
             base_url=config.ark_base_url,
@@ -264,7 +283,7 @@ async def debug_raw_model_stream(
                     "payload": {},
                 }
             )
-        except Exception as exc:  # noqa: BLE001 - 调试流需要向外返回原始异常信息
+        except Exception as exc:  # noqa: BLE001
             yield _to_sse_data(
                 {
                     "event_type": "raw_error",
