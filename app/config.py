@@ -106,49 +106,46 @@ def _ensure_disjoint_allowed_lists(
 class ModelRequestLayerConfig(BaseModel):
     """单个配置层中的模型请求参数配置。"""
 
-    model_params: dict[str, Any] = Field(default_factory=dict)
-    extra_allowed_openai_params: list[str] = Field(default_factory=list)
-    blocked_allowed_openai_params: list[str] = Field(default_factory=list)
+    openai_defaults: dict[str, Any] = Field(default_factory=dict)
+    provider_defaults: dict[str, Any] = Field(default_factory=dict)
     extra_body: dict[str, Any] = Field(default_factory=dict)
+    litellm_allowed_openai_passthrough: list[str] = Field(default_factory=list)
 
 
 class ModelRequestConfig(BaseModel):
     """针对单个模型解析完成后的请求兼容配置。"""
 
-    compat_allowed_openai_params: list[str] = Field(default_factory=list)
-    non_overridable_request_params: list[str] = Field(default_factory=list)
-    model_params: dict[str, Any] = Field(default_factory=dict)
-    extra_allowed_openai_params: list[str] = Field(default_factory=list)
-    blocked_allowed_openai_params: list[str] = Field(default_factory=list)
+    non_overridable_openai_params: list[str] = Field(default_factory=list)
+    non_overridable_provider_params: list[str] = Field(default_factory=list)
+    openai_defaults: dict[str, Any] = Field(default_factory=dict)
+    provider_defaults: dict[str, Any] = Field(default_factory=dict)
+    litellm_allowed_openai_passthrough: list[str] = Field(default_factory=list)
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def allowed_openai_param_hints(self) -> list[str]:
         """返回配置层提供的放行名单提示。"""
-        return _merge_string_lists(
-            self.compat_allowed_openai_params,
-            self.extra_allowed_openai_params,
-        )
+        return list(self.litellm_allowed_openai_passthrough)
 
 
 def _validate_request_global_section(section: Any) -> dict[str, list[str]]:
     """校验 global 配置段并返回规范化结果。"""
     if section is None:
         return {
-            "compat_allowed_openai_params": [],
-            "non_overridable_request_params": [],
+            "non_overridable_openai_params": [],
+            "non_overridable_provider_params": [],
         }
     if not isinstance(section, dict):
         raise ValueError("global must be a TOML table")
 
     return {
-        "compat_allowed_openai_params": _read_string_array(
-            section.get("compat_allowed_openai_params", []),
-            "global.compat_allowed_openai_params",
+        "non_overridable_openai_params": _read_string_array(
+            section.get("non_overridable_openai_params", []),
+            "global.non_overridable_openai_params",
         ),
-        "non_overridable_request_params": _read_string_array(
-            section.get("non_overridable_request_params", []),
-            "global.non_overridable_request_params",
+        "non_overridable_provider_params": _read_string_array(
+            section.get("non_overridable_provider_params", []),
+            "global.non_overridable_provider_params",
         ),
     }
 
@@ -160,33 +157,28 @@ def _validate_request_layer(section: Any, *, section_name: str) -> ModelRequestL
     if not isinstance(section, dict):
         raise ValueError(f"{section_name} must be a TOML table")
 
-    model_params = section.get("model_params", {})
-    if not isinstance(model_params, dict):
-        raise ValueError(f"{section_name}.model_params must be a TOML table")
+    openai_defaults = section.get("openai_defaults", {})
+    if not isinstance(openai_defaults, dict):
+        raise ValueError(f"{section_name}.openai_defaults must be a TOML table")
+
+    provider_defaults = section.get("provider_defaults", {})
+    if not isinstance(provider_defaults, dict):
+        raise ValueError(f"{section_name}.provider_defaults must be a TOML table")
 
     extra_body = section.get("extra_body", {})
     if not isinstance(extra_body, dict):
         raise ValueError(f"{section_name}.extra_body must be a TOML table")
 
-    extra_allowed = _read_string_array(
-        section.get("extra_allowed_openai_params", []),
-        f"{section_name}.extra_allowed_openai_params",
-    )
-    blocked_allowed = _read_string_array(
-        section.get("blocked_allowed_openai_params", []),
-        f"{section_name}.blocked_allowed_openai_params",
-    )
-    _ensure_disjoint_allowed_lists(
-        extra_allowed=extra_allowed,
-        blocked_allowed=blocked_allowed,
-        section_name=section_name,
+    litellm_allowed = _read_string_array(
+        section.get("litellm_allowed_openai_passthrough", []),
+        f"{section_name}.litellm_allowed_openai_passthrough",
     )
 
     return ModelRequestLayerConfig(
-        model_params=model_params,
-        extra_allowed_openai_params=extra_allowed,
-        blocked_allowed_openai_params=blocked_allowed,
+        openai_defaults=openai_defaults,
+        provider_defaults=provider_defaults,
         extra_body=extra_body,
+        litellm_allowed_openai_passthrough=litellm_allowed,
     )
 
 
@@ -223,26 +215,24 @@ def _load_model_request_config(
         section_name=f'models."{model_name}"',
     )
 
-    extra_allowed = _merge_string_lists(
-        default_section.extra_allowed_openai_params,
-        model_section.extra_allowed_openai_params,
-    )
-    blocked_allowed = _merge_string_lists(
-        default_section.blocked_allowed_openai_params,
-        model_section.blocked_allowed_openai_params,
-    )
     return ModelRequestConfig(
-        compat_allowed_openai_params=global_section["compat_allowed_openai_params"],
-        non_overridable_request_params=global_section["non_overridable_request_params"],
-        model_params=_merge_json_objects(
-            default_section.model_params,
-            model_section.model_params,
+        non_overridable_openai_params=global_section["non_overridable_openai_params"],
+        non_overridable_provider_params=global_section["non_overridable_provider_params"],
+        openai_defaults=_merge_json_objects(
+            default_section.openai_defaults,
+            model_section.openai_defaults,
         ),
-        extra_allowed_openai_params=extra_allowed,
-        blocked_allowed_openai_params=blocked_allowed,
+        provider_defaults=_merge_json_objects(
+            default_section.provider_defaults,
+            model_section.provider_defaults,
+        ),
         extra_body=_merge_json_objects(
             default_section.extra_body,
             model_section.extra_body,
+        ),
+        litellm_allowed_openai_passthrough=_merge_string_lists(
+            default_section.litellm_allowed_openai_passthrough,
+            model_section.litellm_allowed_openai_passthrough,
         ),
     )
 

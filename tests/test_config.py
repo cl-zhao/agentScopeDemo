@@ -8,7 +8,7 @@ from app import config as config_module
 from app.config import AppConfig
 
 
-def test_from_env_loads_structured_model_request_config_from_toml(
+def test_from_env_loads_two_layer_model_request_config_from_toml(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -21,20 +21,20 @@ def test_from_env_loads_structured_model_request_config_from_toml(
         "\n".join(
             [
                 "[global]",
-                'compat_allowed_openai_params = ["parallel_tool_calls", "response_format"]',
-                'non_overridable_request_params = ["model", "messages"]',
+                'non_overridable_openai_params = ["model", "messages"]',
+                'non_overridable_provider_params = ["allowed_openai_params", "extra_body"]',
                 "",
                 "[default]",
-                'model_params = { tool_choice = "auto", response_format = "json_object" }',
-                'extra_allowed_openai_params = ["reasoning_effort"]',
-                'blocked_allowed_openai_params = ["response_format"]',
+                'openai_defaults = { tool_choice = "auto", response_format = "json_object" }',
+                'provider_defaults = { top_k = 16 }',
                 'extra_body = { provider_route = "lite", nested = { source = "default" } }',
+                'litellm_allowed_openai_passthrough = ["response_format"]',
                 "",
                 '[models."demo-model"]',
-                'model_params = { response_format = "json_schema", top_p = 0.8 }',
-                'extra_allowed_openai_params = ["frequency_penalty"]',
-                'blocked_allowed_openai_params = ["reasoning_effort"]',
+                'openai_defaults = { response_format = "json_schema", top_p = 0.8 }',
+                'provider_defaults = { repetition_penalty = 1.1 }',
                 'extra_body = { route = "local", nested = { source = "model" } }',
+                'litellm_allowed_openai_passthrough = ["reasoning_effort"]',
             ],
         ),
         encoding="utf-8",
@@ -43,32 +43,32 @@ def test_from_env_loads_structured_model_request_config_from_toml(
 
     config = AppConfig.from_env()
 
-    assert config.model_request_config.compat_allowed_openai_params == [
-        "parallel_tool_calls",
-        "response_format",
-    ]
-    assert config.model_request_config.non_overridable_request_params == [
+    assert config.model_request_config.non_overridable_openai_params == [
         "model",
         "messages",
     ]
-    assert config.model_request_config.model_params == {
+    assert config.model_request_config.non_overridable_provider_params == [
+        "allowed_openai_params",
+        "extra_body",
+    ]
+    assert config.model_request_config.openai_defaults == {
         "tool_choice": "auto",
         "response_format": "json_schema",
         "top_p": 0.8,
     }
-    assert config.model_request_config.extra_allowed_openai_params == [
-        "reasoning_effort",
-        "frequency_penalty",
-    ]
-    assert config.model_request_config.blocked_allowed_openai_params == [
-        "response_format",
-        "reasoning_effort",
-    ]
+    assert config.model_request_config.provider_defaults == {
+        "top_k": 16,
+        "repetition_penalty": 1.1,
+    }
     assert config.model_request_config.extra_body == {
         "provider_route": "lite",
         "route": "local",
         "nested": {"source": "model"},
     }
+    assert config.model_request_config.litellm_allowed_openai_passthrough == [
+        "response_format",
+        "reasoning_effort",
+    ]
 
 
 def test_from_env_rejects_invalid_model_request_config(
@@ -84,17 +84,17 @@ def test_from_env_rejects_invalid_model_request_config(
         "\n".join(
             [
                 "[global]",
-                'compat_allowed_openai_params = ["parallel_tool_calls"]',
-                'non_overridable_request_params = ["model"]',
+                'non_overridable_openai_params = ["model"]',
+                'non_overridable_provider_params = ["allowed_openai_params"]',
                 "",
                 "[default]",
-                'model_params = { tool_choice = "auto" }',
-                'extra_allowed_openai_params = ["reasoning_effort"]',
-                'blocked_allowed_openai_params = ["reasoning_effort"]',
+                'openai_defaults = { tool_choice = "auto" }',
+                'provider_defaults = { top_k = 16 }',
                 'extra_body = { provider_route = "lite" }',
+                'litellm_allowed_openai_passthrough = ["response_format"]',
                 "",
                 '[models."demo-model"]',
-                'model_params = "not-a-table"',
+                'provider_defaults = "not-a-table"',
             ],
         ),
         encoding="utf-8",
@@ -103,7 +103,7 @@ def test_from_env_rejects_invalid_model_request_config(
 
     with pytest.raises(
         ValueError,
-        match="blocked_allowed_openai_params",
+        match="provider_defaults",
     ):
         AppConfig.from_env()
 

@@ -1,37 +1,39 @@
+# This file defines request-shaping defaults for each model.
+# OpenAI-style params stay at the request top level.
+# Provider-native params always go through extra_body.
+
 [global]
-compat_allowed_openai_params = [
-  "parallel_tool_calls",
-  "tool_choice",
-  "reasoning_effort",
-  "frequency_penalty",
-  "presence_penalty",
-  "top_p",
-  "top_k",
-  "min_p",
-  "response_format",
-]
-non_overridable_request_params = [
+non_overridable_openai_params = [
   "model",
   "messages",
   "stream",
   "api_key",
   "base_url",
+  "extra_body",
+]
+non_overridable_provider_params = [
+  "allowed_openai_params",
+  "extra_body",
 ]
 
 [default]
-model_params = {}
-extra_allowed_openai_params = []
-blocked_allowed_openai_params = []
+openai_defaults = {}
+provider_defaults = {}
 extra_body = {}
+litellm_allowed_openai_passthrough = [
+  "parallel_tool_calls",
+  "reasoning_effort",
+  "response_format",
+]
 
 [models."doubao-seed-2-0-mini-260215"]
-model_params = {}
-extra_allowed_openai_params = []
-blocked_allowed_openai_params = []
+openai_defaults = {}
+provider_defaults = {}
 extra_body = {}
+litellm_allowed_openai_passthrough = []
 
 [models."doubao-seed-2-0-pro-260215"]
-model_params = {}
-extra_allowed_openai_params = []
-blocked_allowed_openai_params = []
+openai_defaults = {}
+provider_defaults = {}
 extra_body = {}
+litellm_allowed_openai_passthrough = []
