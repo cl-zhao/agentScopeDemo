@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ResponseMode(str, Enum):
@@ -158,6 +158,8 @@ class ContextPackage(BaseModel):
 class ExecutionStreamRequest(BaseModel):
     """无状态执行的主请求模型。"""
 
+    model_config = ConfigDict(extra="allow")
+
     session_id: str = Field(
         min_length=1,
         description="Caller-supplied correlation identifier.",
@@ -178,13 +180,6 @@ class ExecutionStreamRequest(BaseModel):
         default_factory=ContextPackage,
         description="Caller-managed context envelope.",
     )
-    openai_params: dict[str, Any] = Field(
-        default_factory=dict,
-        description=(
-            "Caller-supplied OpenAI-style params forwarded at the top level "
-            "of the model request."
-        ),
-    )
     provider_params: dict[str, Any] = Field(
         default_factory=dict,
         description=(
@@ -195,6 +190,11 @@ class ExecutionStreamRequest(BaseModel):
     current_input: ContextMessage = Field(
         description="The new user turn to execute against the compiled context.",
     )
+
+    @property
+    def openai_params(self) -> dict[str, Any]:
+        """Return caller-supplied top-level OpenAI-style params."""
+        return dict(self.model_extra or {})
 
 
 class ExecutionResponse(BaseModel):

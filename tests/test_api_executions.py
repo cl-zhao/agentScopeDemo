@@ -109,6 +109,30 @@ def test_stream_execution_endpoint() -> None:
     assert events[-1]["event_type"] == "final"
 
 
+def test_stream_execution_accepts_top_level_openai_style_params() -> None:
+    app = create_app(execution_manager=FakeExecutionManager())
+    client = TestClient(app)
+
+    with client.stream(
+        "POST",
+        "/v1/executions/stream",
+        json={
+            "session_id": "session-1",
+            "access_param": "opaque-token",
+            "context_package": {"version": "1.0"},
+            "current_input": {"role": "user", "content": "hello"},
+            "reasoning_effort": "minimal",
+            "parallel_tool_calls": False,
+            "provider_params": {"top_k": 16},
+        },
+    ) as response:
+        body_text = "".join(response.iter_text())
+
+    events = _extract_sse_events(body_text)
+    assert response.status_code == 200
+    assert events[-1]["event_type"] == "final"
+
+
 def test_stream_execution_rejects_reserved_openai_param_keys() -> None:
     app = create_app(
         execution_manager=FakeExecutionManager(),
@@ -132,6 +156,25 @@ def test_stream_execution_rejects_reserved_openai_param_keys() -> None:
             "context_package": {"version": "1.0"},
             "current_input": {"role": "user", "content": "hello"},
             "openai_params": {"model": "override-model"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert "openai_params" in response.json()["detail"]
+
+
+def test_stream_execution_rejects_legacy_openai_params_wrapper() -> None:
+    app = create_app(execution_manager=FakeExecutionManager())
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/executions/stream",
+        json={
+            "session_id": "session-1",
+            "access_param": "opaque-token",
+            "context_package": {"version": "1.0"},
+            "current_input": {"role": "user", "content": "hello"},
+            "openai_params": {"reasoning_effort": "minimal"},
         },
     )
 

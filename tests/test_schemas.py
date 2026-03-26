@@ -49,16 +49,14 @@ def test_execution_stream_request_defaults() -> None:
     assert request.provider_params == {}
 
 
-def test_execution_stream_request_accepts_split_passthrough_params() -> None:
+def test_execution_stream_request_accepts_top_level_openai_params() -> None:
     request = ExecutionStreamRequest(
         session_id="biz-session-1",
         access_param="opaque-token",
         context_package=ContextPackage(),
         current_input=ContextMessage(role="user", content="hello"),
-        openai_params={
-            "parallel_tool_calls": False,
-            "reasoning_effort": "high",
-        },
+        parallel_tool_calls=False,
+        reasoning_effort="high",
         provider_params={
             "top_k": 20,
             "repetition_penalty": 1.1,
@@ -75,16 +73,7 @@ def test_execution_stream_request_accepts_split_passthrough_params() -> None:
     }
 
 
-def test_execution_stream_request_rejects_non_object_param_layers() -> None:
-    with pytest.raises(ValueError, match="openai_params"):
-        ExecutionStreamRequest(
-            session_id="biz-session-1",
-            access_param="opaque-token",
-            context_package=ContextPackage(),
-            current_input=ContextMessage(role="user", content="hello"),
-            openai_params=["parallel_tool_calls"],
-        )
-
+def test_execution_stream_request_rejects_non_object_provider_params() -> None:
     with pytest.raises(ValueError, match="provider_params"):
         ExecutionStreamRequest(
             session_id="biz-session-1",

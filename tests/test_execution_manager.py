@@ -451,10 +451,8 @@ def test_stream_execution_passes_split_request_params_to_factory(
                 access_param="opaque-token",
                 context_package=ContextPackage(),
                 current_input=ContextMessage(role="user", content="hello"),
-                openai_params={
-                    "parallel_tool_calls": False,
-                    "reasoning_effort": "high",
-                },
+                parallel_tool_calls=False,
+                reasoning_effort="high",
                 provider_params={"top_k": 16},
             )
         ):
@@ -487,10 +485,8 @@ def test_stream_execution_logs_litellm_request_diagnostics(
                 access_param="opaque-token",
                 context_package=ContextPackage(),
                 current_input=ContextMessage(role="user", content="hello"),
-                openai_params={
-                    "parallel_tool_calls": False,
-                    "reasoning_effort": "high",
-                },
+                parallel_tool_calls=False,
+                reasoning_effort="high",
                 provider_params={"top_k": 16},
             )
         ):

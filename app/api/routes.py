@@ -109,6 +109,12 @@ def _validate_request_params(
     config: AppConfig,
 ) -> None:
     """Validate request-level OpenAI/provider params before execution starts."""
+    if "openai_params" in request_body.openai_params:
+        raise HTTPException(
+            status_code=400,
+            detail="openai_params wrapper is no longer supported; send OpenAI params at the top level",
+        )
+
     overlapping_keys = [
         key for key in request_body.openai_params if key in request_body.provider_params
     ]
