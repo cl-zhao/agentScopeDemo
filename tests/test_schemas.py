@@ -45,35 +45,53 @@ def test_execution_stream_request_defaults() -> None:
     assert request.return_context_package is False
     assert request.response_mode == ResponseMode.TEXT
     assert request.context_package.version == "1.0"
-    assert request.allowed_openai_params == {}
+    assert request.openai_params == {}
+    assert request.provider_params == {}
 
 
-def test_execution_stream_request_accepts_valued_allowed_openai_params() -> None:
+def test_execution_stream_request_accepts_split_passthrough_params() -> None:
     request = ExecutionStreamRequest(
         session_id="biz-session-1",
         access_param="opaque-token",
         context_package=ContextPackage(),
         current_input=ContextMessage(role="user", content="hello"),
-        allowed_openai_params={
+        openai_params={
             "parallel_tool_calls": False,
             "reasoning_effort": "high",
         },
+        provider_params={
+            "top_k": 20,
+            "repetition_penalty": 1.1,
+        },
     )
 
-    assert request.allowed_openai_params == {
+    assert request.openai_params == {
         "parallel_tool_calls": False,
         "reasoning_effort": "high",
     }
+    assert request.provider_params == {
+        "top_k": 20,
+        "repetition_penalty": 1.1,
+    }
 
 
-def test_execution_stream_request_rejects_non_object_allowed_openai_params() -> None:
-    with pytest.raises(ValueError, match="allowed_openai_params"):
+def test_execution_stream_request_rejects_non_object_param_layers() -> None:
+    with pytest.raises(ValueError, match="openai_params"):
         ExecutionStreamRequest(
             session_id="biz-session-1",
             access_param="opaque-token",
             context_package=ContextPackage(),
             current_input=ContextMessage(role="user", content="hello"),
-            allowed_openai_params=["parallel_tool_calls"],
+            openai_params=["parallel_tool_calls"],
+        )
+
+    with pytest.raises(ValueError, match="provider_params"):
+        ExecutionStreamRequest(
+            session_id="biz-session-1",
+            access_param="opaque-token",
+            context_package=ContextPackage(),
+            current_input=ContextMessage(role="user", content="hello"),
+            provider_params=["top_k"],
         )
 
 
