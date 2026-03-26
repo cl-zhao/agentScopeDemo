@@ -219,7 +219,8 @@ class AgentFactory:
 
     async def create_agent(
         self,
-        request_allowed_openai_params: dict[str, JSONSerializableObject] | None = None,
+        request_openai_params: dict[str, JSONSerializableObject] | None = None,
+        request_provider_params: dict[str, JSONSerializableObject] | None = None,
     ) -> ReActAgent:
         """构建 ReActAgent 实例。
 
@@ -230,7 +231,8 @@ class AgentFactory:
             model_temperature=self.config.model_temperature,
             model_max_tokens=self.config.model_max_tokens,
             model_request_config=self.config.model_request_config,
-            request_allowed_openai_params=request_allowed_openai_params,
+            request_openai_params=request_openai_params,
+            request_provider_params=request_provider_params,
         )
 
         model = ContextAwareOpenAIChatModel(
@@ -278,15 +280,12 @@ class AgentFactory:
             parallel_tool_calls=built_request.agent_parallel_tool_calls,
         )
         agent._litellm_request_diagnostics = {
-            "request_allowed_openai_param_keys": (
-                built_request.request_allowed_openai_param_keys
+            "request_openai_param_keys": built_request.request_openai_param_keys,
+            "request_provider_param_keys": built_request.request_provider_param_keys,
+            "generated_allowed_openai_param_keys": (
+                built_request.generated_allowed_openai_param_keys
             ),
-            "effective_allowed_openai_param_keys": (
-                built_request.effective_allowed_openai_param_keys
-            ),
-            "request_overridden_param_keys": (
-                built_request.request_overridden_param_keys
-            ),
+            "final_top_level_param_keys": built_request.final_top_level_param_keys,
             "final_extra_body_keys": built_request.final_extra_body_keys,
             "param_sources": built_request.param_sources,
         }
